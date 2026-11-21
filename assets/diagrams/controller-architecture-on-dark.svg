@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="420" viewBox="0 0 1040 420" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title id="t">Plug-compatible architecture with OpenZiti Controller and ZAC binding</title>
+<desc id="d">Baked Pasta Console builds a drop-in static SPA bundle (ziti-console.zip) served directly by an OpenZiti Controller zac binding or any static web server, communicating with the OpenZiti Edge Management API (/edge/management/v1) and OIDC PKCE (/oidc).</desc>
+<defs>
+<marker id="arr-http" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9FC2B8"/></marker>
+<marker id="arr-overlay" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#FF7A4D"/></marker>
+<marker id="arr-router" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#4AC29B"/></marker>
+</defs>
+<rect width="1040" height="420" rx="14" fill="#0F1A18"/>
+<text x="32" y="40" font-size="19" font-weight="700" fill="#F6ECDC" text-anchor="start">Plug-Compatible Architecture · OpenZiti Controller &amp; ZAC Binding</text>
+<text x="32" y="61" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start">Drop-in static SPA bundle (ziti-console.zip) speaking standard OpenZiti Edge Management REST &amp; OIDC PKCE.</text>
+<rect x="24" y="84" width="330" height="312" rx="14" fill="#15241F" stroke="#2A3F39" stroke-width="1.5"/>
+<text x="44" y="110" font-size="11.5" font-weight="700" fill="#A8B8B2" text-anchor="start" letter-spacing="0.08em">BAKED PASTA CONSOLE · STATIC SPA</text>
+<rect x="44" y="124" width="290" height="250" rx="10" fill="#2A211B" stroke="#9A4A2C" stroke-width="1.5"/>
+<text x="60" y="150" font-size="15" font-weight="650" fill="#F6ECDC" text-anchor="start" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">baked-pasta-console</text>
+<text x="60" y="171" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start">React 19 + TypeScript + Vite</text>
+<text x="60" y="189" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start">Access Canvas (Board &amp; Flow)</text>
+<text x="60" y="207" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start">4-Step Guided Service Wizard</text>
+<text x="60" y="225" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start">Reachability Advisor &amp; Diff</text>
+<text x="60" y="243" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start">Full Edge Management CRUD</text>
+<text x="60" y="261" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start">Interactive Demo Sandbox</text>
+<text x="60" y="279" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start"></text>
+<text x="60" y="297" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start">Drop-in build artifacts:</text>
+<rect x="60" y="344" width="51" height="20" rx="10" fill="#3B3220"/>
+<text x="85.5" y="358" font-size="11.5" font-weight="600" fill="#FBE3A6" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">dist/</text>
+<rect x="117" y="344" width="128" height="20" rx="10" fill="#3B3220"/>
+<text x="181.0" y="358" font-size="11.5" font-weight="600" fill="#FBE3A6" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">ziti-console.zip</text>
+<rect x="416" y="84" width="600" height="312" rx="14" fill="#15241F" stroke="#2A3F39" stroke-width="1.5"/>
+<text x="436" y="110" font-size="11.5" font-weight="700" fill="#A8B8B2" text-anchor="start" letter-spacing="0.08em">OPENZITI CONTROLLER &amp; WEB BINDING</text>
+<rect x="446" y="124" width="252" height="116" rx="10" fill="#1E322C" stroke="#3D5A53" stroke-width="1.5"/>
+<text x="462" y="150" font-size="15" font-weight="650" fill="#F6ECDC" text-anchor="start">Controller Web Binding (zac)</text>
+<text x="462" y="171" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start">Mount static SPA at /zac/ or /</text>
+<text x="462" y="189" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start">/opt/openziti/share/console</text>
+<rect x="462" y="210" width="100" height="20" rx="10" fill="#3B3220"/>
+<text x="512.0" y="224" font-size="11.5" font-weight="600" fill="#FBE3A6" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">binding: zac</text>
+<rect x="568" y="210" width="128" height="20" rx="10" fill="#3B3220"/>
+<text x="632.0" y="224" font-size="11.5" font-weight="600" fill="#FBE3A6" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">./build.sh /zac/</text>
+<rect x="712" y="124" width="282" height="116" rx="10" fill="#1E322C" stroke="#3D5A53" stroke-width="1.5"/>
+<text x="728" y="150" font-size="15" font-weight="650" fill="#F6ECDC" text-anchor="start">Authentication &amp; Session</text>
+<text x="728" y="171" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start">UPDB password &amp; OIDC PKCE</text>
+<text x="728" y="189" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start">zt-session &amp; Bearer JWT tokens</text>
+<rect x="728" y="210" width="93" height="20" rx="10" fill="#3B3220"/>
+<text x="774.5" y="224" font-size="11.5" font-weight="600" fill="#FBE3A6" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">UPDB / OIDC</text>
+<rect x="827" y="210" width="107" height="20" rx="10" fill="#3B3220"/>
+<text x="880.5" y="224" font-size="11.5" font-weight="600" fill="#FBE3A6" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">ziti.settings</text>
+<rect x="446" y="258" width="548" height="116" rx="10" fill="#1E322C" stroke="#3D5A53" stroke-width="1.5"/>
+<text x="462" y="284" font-size="15" font-weight="650" fill="#F6ECDC" text-anchor="start">OpenZiti Edge Management API (/edge/management/v1)</text>
+<text x="462" y="305" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start">Identities · Services · Configs · Edge Routers · Posture Checks</text>
+<text x="462" y="323" font-size="12.5" font-weight="400" fill="#A8B8B2" text-anchor="start">Service Policies (Dial/Bind) · Edge Router &amp; Service Router Policies · Terminators</text>
+<rect x="462" y="344" width="205" height="20" rx="10" fill="#3B3220"/>
+<text x="564.5" y="358" font-size="11.5" font-weight="600" fill="#FBE3A6" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">GET / POST / PATCH / DELETE</text>
+<rect x="673" y="344" width="240" height="20" rx="10" fill="#3B3220"/>
+<text x="793.0" y="358" font-size="11.5" font-weight="600" fill="#FBE3A6" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">ziti.access-canvas.layout.&lt;ctrl&gt;</text>
+<path d="M334 182 L446 182" fill="none" stroke="#FF7A4D" stroke-width="2" stroke-linejoin="round" marker-end="url(#arr-overlay)"/>
+<rect x="327.5" y="155" width="125" height="20" rx="10" fill="#0F1A18" stroke="#FF7A4D" stroke-width="1"/>
+<text x="390" y="169.5" font-size="11.5" font-weight="600" fill="#FF7A4D" text-anchor="middle">ziti-console.zip</text>
+<path d="M334 316 L446 316" fill="none" stroke="#9FC2B8" stroke-width="2" stroke-linejoin="round" marker-end="url(#arr-http)"/>
+<rect x="344.5" y="289" width="91" height="20" rx="10" fill="#0F1A18" stroke="#9FC2B8" stroke-width="1"/>
+<text x="390" y="303.5" font-size="11.5" font-weight="600" fill="#9FC2B8" text-anchor="middle">REST + OIDC</text>
+</svg>

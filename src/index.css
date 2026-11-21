@@ -1,0 +1,510 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+:root {
+  color-scheme: light dark;
+
+  &:has(> head > meta[name="color-scheme"][content="dark"]) {
+    color-scheme: dark;
+  }
+  &:has(> head > meta[name="color-scheme"][content="light"]) {
+    color-scheme: light;
+  }
+
+  /* Light & Dark raw tokens — Baked Pasta Brand Palette
+     (Deep Basil Green #14302B, Marinara Tomato #D9481C, Ziti Gold #F2B544, Warm Cream #F6ECDC) */
+  --bg-light: #fffdf9;
+  --bg-dark: #0f1a18;
+  --surface-light: #ffffff;
+  --surface-dark: #15241f;
+  --surface-2-light: #f6ecdc;
+  --surface-2-dark: #1e322c;
+  --ink-light: #14302b;
+  --ink-dark: #f6ecdc;
+  --muted-light: #5e6e69;
+  --muted-dark: #a8b8b2;
+  --line-light: #cdbfa6;
+  --line-dark: #2a3f39;
+
+  /* Brand & Semantic OpenZiti tokens */
+  --dial-light: #2a6054;
+  --dial-dark: #63b9a5;
+  --bind-light: #d9481c;
+  --bind-dark: #ff7a4d;
+  --router-light: #1f7a62;
+  --router-dark: #4ac29b;
+  --pending-light: #c88a14;
+  --pending-dark: #f2b544;
+  --bad-light: #c9352b;
+  --bad-dark: #f87171;
+  --ok-light: #1e7a46;
+  --ok-dark: #4ade80;
+
+  /* Fallback defaults before light-dark() */
+  --ac-bg: var(--bg-light);
+  --ac-surface: var(--surface-light);
+  --ac-surface-2: var(--surface-2-light);
+  --ac-ink: var(--ink-light);
+  --ac-muted: var(--muted-light);
+  --ac-line: var(--line-light);
+  --ac-dial: var(--dial-light);
+  --ac-bind: var(--bind-light);
+  --ac-router: var(--router-light);
+  --ac-pending: var(--pending-light);
+  --ac-bad: var(--bad-light);
+  --ac-ok: var(--ok-light);
+
+  @media (prefers-color-scheme: dark) {
+    --ac-bg: var(--bg-dark);
+    --ac-surface: var(--surface-dark);
+    --ac-surface-2: var(--surface-2-dark);
+    --ac-ink: var(--ink-dark);
+    --ac-muted: var(--muted-dark);
+    --ac-line: var(--line-dark);
+    --ac-dial: var(--dial-dark);
+    --ac-bind: var(--bind-dark);
+    --ac-router: var(--router-dark);
+    --ac-pending: var(--pending-dark);
+    --ac-bad: var(--bad-dark);
+    --ac-ok: var(--ok-dark);
+  }
+
+  @supports (color: light-dark(white, black)) {
+    --ac-bg: light-dark(var(--bg-light), var(--bg-dark));
+    --ac-surface: light-dark(var(--surface-light), var(--surface-dark));
+    --ac-surface-2: light-dark(var(--surface-2-light), var(--surface-2-dark));
+    --ac-ink: light-dark(var(--ink-light), var(--ink-dark));
+    --ac-muted: light-dark(var(--muted-light), var(--muted-dark));
+    --ac-line: light-dark(var(--line-light), var(--line-dark));
+    --ac-dial: light-dark(var(--dial-light), var(--dial-dark));
+    --ac-bind: light-dark(var(--bind-light), var(--bind-dark));
+    --ac-router: light-dark(var(--router-light), var(--router-dark));
+    --ac-pending: light-dark(var(--pending-light), var(--pending-dark));
+    --ac-bad: light-dark(var(--bad-light), var(--bad-dark));
+    --ac-ok: light-dark(var(--ok-light), var(--ok-dark));
+  }
+
+  --ac-dial-soft: color-mix(in srgb, var(--ac-dial) 14%, var(--ac-surface));
+  --ac-bind-soft: color-mix(in srgb, var(--ac-bind) 14%, var(--ac-surface));
+  --ac-router-soft: color-mix(in srgb, var(--ac-router) 14%, var(--ac-surface));
+  --ac-pending-soft: color-mix(in srgb, var(--ac-pending) 16%, var(--ac-surface));
+  --ac-bad-soft: color-mix(in srgb, var(--ac-bad) 14%, var(--ac-surface));
+  --ac-ok-soft: color-mix(in srgb, var(--ac-ok) 15%, var(--ac-surface));
+  --ac-mono: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  --ac-shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 6px 18px rgb(0 0 0 / 0.06);
+
+  accent-color: var(--ac-dial);
+  scrollbar-color: color-mix(in srgb, var(--ac-muted) 45%, transparent) transparent;
+}
+
+body {
+  margin: 0;
+  background-color: var(--ac-bg);
+  color: var(--ac-ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Native <dialog> modern best-practice scroll containment */
+dialog:modal {
+  overscroll-behavior: contain;
+}
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background: rgb(8 12 22 / 0.55);
+  backdrop-filter: blur(4px);
+}
+
+/* Responsive & Sortable Data Table container rules */
+.bpc-table-region {
+  overflow: auto;
+  max-inline-size: 100%;
+  container-type: inline-size;
+}
+.bpc-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.bpc-table thead {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+  background: var(--ac-surface-2);
+}
+.bpc-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ac-muted);
+  border-bottom: 1px solid var(--ac-line);
+  padding: 0.65rem 0.9rem;
+  white-space: nowrap;
+}
+.bpc-table th:has(> button) {
+  padding: 0;
+}
+.bpc-table th > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  min-height: 28px;
+  padding: 0.65rem 0.9rem;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.bpc-table th > button:hover {
+  color: var(--ac-ink);
+}
+.bpc-table th[aria-sort] > button {
+  color: var(--ac-dial);
+}
+.bpc-table td {
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--ac-line);
+  font-size: 0.875rem;
+  vertical-align: middle;
+}
+.bpc-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--ac-dial) 4%, var(--ac-surface));
+}
+
+.sr-only-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Freeform Access Canvas styles */
+.ab-canvas-board {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
+  outline: none;
+  border: 1px solid var(--ac-line);
+  border-radius: 12px;
+  overflow: hidden;
+  background-color: var(--ac-bg);
+  background-image: radial-gradient(color-mix(in srgb, var(--ac-ink) 16%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ab-canvas-board:focus-visible {
+  box-shadow: 0 0 0 2px var(--ac-dial);
+}
+.ab-viewport {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+}
+.ab-viewport:active {
+  cursor: grabbing;
+}
+.ab-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+.ab-edges {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.ab-edges path {
+  fill: none;
+  stroke-width: 2.2;
+  opacity: 0.78;
+  transition: opacity 0.14s, stroke-width 0.14s;
+}
+.ab-edges path.dial {
+  stroke: var(--ac-dial);
+}
+.ab-edges path.bind {
+  stroke: var(--ac-bind);
+}
+.ab-edges path.erp,
+.ab-edges path.serp {
+  stroke: var(--ac-router);
+}
+.ab-edges path.byname {
+  stroke-dasharray: 2 5;
+}
+.ab-edges path.pending {
+  stroke: var(--ac-pending);
+  stroke-dasharray: 6 4;
+  opacity: 1;
+}
+.ab-edges path.hot {
+  stroke-width: 3.2;
+  opacity: 1;
+}
+.ab-canvas-board.has-hot .ab-edges path:not(.hot) {
+  opacity: 0.14;
+}
+.ab-canvas-board.has-hot .ab-node:not(.hot) {
+  opacity: 0.42;
+}
+.ab-node {
+  position: absolute;
+  box-sizing: border-box;
+  background: var(--ac-surface);
+  color: var(--ac-ink);
+  border: 1px solid var(--ac-line);
+  border-radius: 10px;
+  box-shadow: var(--ac-shadow);
+  cursor: default;
+  font-size: 13px;
+  transition: opacity 0.14s, box-shadow 0.14s;
+}
+.ab-node.sel {
+  outline: 2px solid var(--ac-dial);
+  outline-offset: 1px;
+}
+.ab-node.drop {
+  outline: 2px dashed var(--ac-ok);
+  outline-offset: 3px;
+  background: var(--ac-ok-soft);
+}
+.ab-node.dim {
+  opacity: 0.35;
+}
+.ab-node.hit {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ac-pending) 48%, transparent), var(--ac-shadow);
+}
+.ab-group {
+  overflow: hidden;
+  border-top: 3px solid var(--ac-dial);
+}
+.ab-group[data-kind="service"] {
+  border-top-color: var(--ac-bind);
+}
+.ab-group[data-kind="router"] {
+  border-top-color: var(--ac-router);
+}
+.ab-group.pending {
+  border-style: dashed;
+  border-color: var(--ac-pending);
+}
+.ab-gh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 10px;
+  cursor: move;
+  border-bottom: 1px solid var(--ac-line);
+  background: var(--ac-surface-2);
+}
+.ab-kind {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--ac-dial-soft);
+  color: var(--ac-dial);
+}
+[data-kind="service"] .ab-kind {
+  background: var(--ac-bind-soft);
+  color: var(--ac-bind);
+}
+[data-kind="router"] .ab-kind {
+  background: var(--ac-router-soft);
+  color: var(--ac-router);
+}
+.ab-attr {
+  font-weight: 600;
+  font-family: var(--ac-mono);
+  font-size: 12.5px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ab-count {
+  font-size: 12px;
+  color: var(--ac-muted);
+}
+.ab-prob {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--ac-bad);
+  border-radius: 9px;
+  padding: 0 6px;
+  line-height: 17px;
+}
+.ab-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  cursor: grab;
+  outline: none;
+}
+.ab-row:hover {
+  background: var(--ac-surface-2);
+}
+.ab-row.sel {
+  background: var(--ac-dial-soft);
+  box-shadow: inset 3px 0 0 var(--ac-dial);
+}
+.ab-row.drop {
+  background: var(--ac-ok-soft);
+  box-shadow: inset 0 0 0 2px var(--ac-ok);
+}
+.ab-row.pending {
+  background: var(--ac-pending-soft);
+}
+.ab-row.hit .ab-name {
+  text-decoration: underline 2px var(--ac-pending);
+  text-underline-offset: 3px;
+}
+.ab-grip {
+  color: var(--ac-muted);
+  font-size: 11px;
+}
+.ab-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ab-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.ab-dot.bad {
+  background: var(--ac-bad);
+}
+.ab-dot.pend {
+  background: var(--ac-pending);
+}
+.ab-empty-row {
+  height: 26px;
+  line-height: 26px;
+  padding: 0 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--ac-muted);
+}
+.ab-more {
+  display: block;
+  width: 100%;
+  height: 26px;
+  border: 0;
+  border-top: 1px solid var(--ac-line);
+  background: none;
+  color: var(--ac-dial);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.ab-free {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  cursor: move;
+  border-style: dashed;
+}
+.ab-free.pending {
+  border-color: var(--ac-pending);
+}
+.ab-hub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 13px;
+  cursor: move;
+  font-size: 12px;
+  white-space: nowrap;
+  border: 1.5px solid var(--ac-dial);
+  background: var(--ac-dial-soft);
+}
+.ab-hub[data-family="bind"] {
+  border-color: var(--ac-bind);
+  background: var(--ac-bind-soft);
+}
+.ab-hub[data-family="erp"],
+.ab-hub[data-family="serp"] {
+  border-color: var(--ac-router);
+  background: var(--ac-router-soft);
+}
+.ab-hub.pending {
+  border-style: dashed;
+  border-color: var(--ac-pending);
+  background: var(--ac-pending-soft);
+}
+.ab-hub.bad {
+  box-shadow: 0 0 0 2px var(--ac-bad-soft);
+}
+.ab-fam {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ac-muted);
+}
+.ab-pname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ab-all {
+  font-size: 10.5px;
+  border-radius: 6px;
+  padding: 0 5px;
+  background: var(--ac-surface);
+  border: 1px solid var(--ac-line);
+}
+.ab-marquee {
+  position: absolute;
+  border: 1px dashed var(--ac-dial);
+  background: color-mix(in srgb, var(--ac-dial) 10%, transparent);
+  pointer-events: none;
+}
+.ab-ghost {
+  position: absolute;
+  pointer-events: none;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  white-space: nowrap;
+  background: var(--ac-surface);
+  border: 1px solid var(--ac-dial);
+  box-shadow: var(--ac-shadow);
+}

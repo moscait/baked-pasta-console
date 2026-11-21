@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="360" viewBox="0 0 1040 360" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title id="t">4-step guided service setup wizard</title>
+<desc id="d">Four steps create everything an OpenZiti service needs: 1. Service Template (16 templates such as SSH, Ollama, HTTPS, PostgreSQL, Kubernetes API), 2. Hosting Server (new or existing identity + host.v1 forward target), 3. Users &amp; Groups (role attribute + user device or existing identities), and 4. Review &amp; Stage into Pending Changes with CLI enrollment commands.</desc>
+<defs>
+<marker id="arr-http" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#3E5A54"/></marker>
+<marker id="arr-overlay" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#D9481C"/></marker>
+<marker id="arr-router" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#2A7B62"/></marker>
+</defs>
+<rect width="1040" height="360" rx="14" fill="#FFFDF9"/>
+<text x="32" y="40" font-size="19" font-weight="700" fill="#14302B" text-anchor="start">4-Step End-to-End Service Setup Wizard</text>
+<text x="32" y="61" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">Creates intercept.v1 &amp; host.v1 configs, service, hosting identity, user group/device, Bind &amp; Dial policies, and router coverage.</text>
+<rect x="24" y="80" width="992" height="256" rx="14" fill="#F6ECDC" stroke="#E3D3B8" stroke-width="1.5"/>
+<text x="44" y="106" font-size="11.5" font-weight="700" fill="#5E6E69" text-anchor="start" letter-spacing="0.08em">GUIDED WIZARD FLOW · STAGED INTO PENDING CHANGES</text>
+<rect x="44" y="120" width="220" height="194" rx="10" fill="#FFFFFF" stroke="#CDBFA6" stroke-width="1.5"/>
+<text x="60" y="146" font-size="15" font-weight="650" fill="#14302B" text-anchor="start">1 · Service Template</text>
+<text x="60" y="167" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">16 built-in templates:</text>
+<text x="60" y="185" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">SSH, RDP, Ollama, HTTPS,</text>
+<text x="60" y="203" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">Postgres, Redis, K8s, Custom</text>
+<text x="60" y="221" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start"></text>
+<text x="60" y="239" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">Suggests idiomatic names:</text>
+<rect x="60" y="284" width="79" height="20" rx="10" fill="#FBE3A6"/>
+<text x="99.5" y="298" font-size="11.5" font-weight="600" fill="#14302B" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">crm-https</text>
+<rect x="145" y="284" width="100" height="20" rx="10" fill="#FBE3A6"/>
+<text x="195.0" y="298" font-size="11.5" font-weight="600" fill="#14302B" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">crm.ziti:443</text>
+<rect x="288" y="120" width="220" height="194" rx="10" fill="#FFFFFF" stroke="#CDBFA6" stroke-width="1.5"/>
+<text x="304" y="146" font-size="15" font-weight="650" fill="#14302B" text-anchor="start">2 · Hosting Server</text>
+<text x="304" y="167" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">New or existing host identity</text>
+<text x="304" y="185" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">running ziti-edge-tunnel.</text>
+<text x="304" y="203" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start"></text>
+<text x="304" y="221" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">Forwards traffic to target:</text>
+<text x="304" y="239" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">127.0.0.1:5432 (host.v1)</text>
+<rect x="304" y="284" width="135" height="20" rx="10" fill="#FBE3A6"/>
+<text x="371.5" y="298" font-size="11.5" font-weight="600" fill="#14302B" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">#billing-db-hosts</text>
+<rect x="532" y="120" width="220" height="194" rx="10" fill="#FFFFFF" stroke="#CDBFA6" stroke-width="1.5"/>
+<text x="548" y="146" font-size="15" font-weight="650" fill="#14302B" text-anchor="start">3 · Users &amp; Groups</text>
+<text x="548" y="167" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">Role attribute group (#dbas,</text>
+<text x="548" y="185" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">#developers, #sre, #sales).</text>
+<text x="548" y="203" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start"></text>
+<text x="548" y="221" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">Ensures reachability via new</text>
+<text x="548" y="239" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">device or existing identities.</text>
+<rect x="548" y="284" width="51" height="20" rx="10" fill="#FBE3A6"/>
+<text x="573.5" y="298" font-size="11.5" font-weight="600" fill="#14302B" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">#dbas</text>
+<rect x="605" y="284" width="93" height="20" rx="10" fill="#FBE3A6"/>
+<text x="651.5" y="298" font-size="11.5" font-weight="600" fill="#14302B" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">jdoe-laptop</text>
+<rect x="776" y="120" width="220" height="194" rx="10" fill="#FFF4E8" stroke="#E9A27F" stroke-width="1.5"/>
+<text x="792" y="146" font-size="15" font-weight="650" fill="#14302B" text-anchor="start">4 · Review &amp; Stage</text>
+<text x="792" y="167" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">✓ intercept.v1 &amp; host.v1</text>
+<text x="792" y="185" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">✓ service + identities</text>
+<text x="792" y="203" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">✓ Bind &amp; Dial policies</text>
+<text x="792" y="221" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">✓ ERP / SERP if uncovered</text>
+<text x="792" y="239" font-size="12.5" font-weight="400" fill="#5E6E69" text-anchor="start">✓ CLI enrollment commands</text>
+<rect x="792" y="284" width="107" height="20" rx="10" fill="#FBE3A6"/>
+<text x="845.5" y="298" font-size="11.5" font-weight="600" fill="#14302B" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">Stage &amp; Apply</text>
+<path d="M264 217 L288 217" fill="none" stroke="#3E5A54" stroke-width="2" stroke-linejoin="round" marker-end="url(#arr-http)"/>
+<path d="M508 217 L532 217" fill="none" stroke="#3E5A54" stroke-width="2" stroke-linejoin="round" marker-end="url(#arr-http)"/>
+<path d="M752 217 L776 217" fill="none" stroke="#D9481C" stroke-width="2" stroke-linejoin="round" marker-end="url(#arr-overlay)"/>
+</svg>
