@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import type { Config } from '../services/api-types';
 import { zitiService } from '../services/ziti-service';
 import { AcService, accessSet, advise, clients } from '../features/access-canvas/access-canvas.logic';
-import { entityProblems } from '../features/access-canvas/canvas-board.logic';
+import { emptyLayout } from '../features/access-canvas/canvas-board.logic';
+import { collectProblems } from '../features/access-canvas/problem-rows';
 import { describeServiceEndpoint } from '../features/services/service-configs';
 import {
   Activity,
@@ -47,16 +48,9 @@ export const DashboardPage: React.FC = () => {
           zitiService.list('configs'),
           zitiService.list('sessions'),
         ]);
-        let probCount = 0;
-        m.identities.forEach((i) => {
-          if (entityProblems(m, 'identity', i.id).length) probCount++;
-        });
-        m.services.forEach((s) => {
-          if (entityProblems(m, 'service', s.id).length) probCount++;
-        });
-        m.routers.forEach((r) => {
-          if (entityProblems(m, 'router', r.id).length) probCount++;
-        });
+        // Same audit as the Access Canvas, so both pages report the same number. Layout only
+        // affects presentation, not which items have problems.
+        const probCount = collectProblems(m, emptyLayout()).total;
 
         setCounts({
           identities: m.identities.length,
@@ -160,7 +154,7 @@ export const DashboardPage: React.FC = () => {
               className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-[var(--ac-bad-soft)] border border-[var(--ac-bad)]/40 text-[var(--ac-bad)] text-xs font-semibold cursor-pointer"
             >
               <AlertTriangle className="w-4 h-4" />
-              <span>{counts.problems} items need attention</span>
+              <span>{counts.problems === 1 ? '1 item needs attention' : `${counts.problems} items need attention`}</span>
             </button>
           )}
         </div>
