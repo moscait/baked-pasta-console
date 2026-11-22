@@ -96,7 +96,7 @@ export const CanvasToolbar: React.FC<{
       <Search className="w-3.5 h-3.5 text-[var(--ac-muted)] absolute left-3 pointer-events-none" />
       <input
         type="search"
-        placeholder="Filter by name, e.g. loft or crm"
+        placeholder="Filter by name, e.g. devbox or crm"
         value={p.filters.search}
         onChange={(e) => p.setFilters((prev) => ({ ...prev, search: e.target.value }))}
         onKeyDown={(e) => {

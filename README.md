@@ -36,7 +36,7 @@ Drag cards between `#attribute` groups, or drag an identity onto a service. Line
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/access-canvas-on-dark.svg">
-  <img src="assets/diagrams/access-canvas.svg" alt="Access Canvas: Client identity groups (#employees, #sales, #ssh-users) connect through Dial policy hubs to zero-trust services (#crm-https, #loft-50-ssh), which connect through Bind policy hubs to hosting identities (#crm-hosts, #loft-hosts) and Edge Routers (#public). The right drawer shows the live reachability advisor and staged REST API diff." width="100%">
+  <img src="assets/diagrams/access-canvas.svg" alt="Access Canvas: Client identity groups (#employees, #sales, #ssh-users) connect through Dial policy hubs to zero-trust services (#crm-https, #devbox-ssh), which connect through Bind policy hubs to hosting identities (#crm-hosts, #devbox-hosts) and Edge Routers (#public). The right drawer shows the live reachability advisor and staged REST API diff." width="100%">
 </picture>
 
 ### Canvas Gestures & Keyboard Shortcuts
@@ -58,7 +58,7 @@ Click **＋ Set up a service** from the Access Canvas or Services page to provis
   <img src="assets/diagrams/service-wizard.svg" alt="4-Step End-to-End Service Setup Wizard: 1. Service Template, 2. Hosting Server, 3. Users & Groups, and 4. Review & Stage into Pending Changes." width="100%">
 </picture>
 
-1. **Service Template**: Pick from 16 common templates (**SSH**, **RDP**, **VNC**, **Ollama**, **HTTPS**, **HTTP**, **Internal API**, **Grafana**, **Jenkins**, **PostgreSQL**, **MySQL**, **SQL Server**, **Redis**, **SMB File Share**, **Kubernetes API**, or **Custom TCP/UDP**) and enter the system name (e.g., `loft-50`, `crm`, `billing-db`). The wizard suggests idiomatic names (`billing-db-postgres`, `billing-db.ziti:5432`).
+1. **Service Template**: Pick from 16 common templates (**SSH**, **RDP**, **VNC**, **Ollama**, **HTTPS**, **HTTP**, **Internal API**, **Grafana**, **Jenkins**, **PostgreSQL**, **MySQL**, **SQL Server**, **Redis**, **SMB File Share**, **Kubernetes API**, or **Custom TCP/UDP**) and enter the system name (e.g., `devbox`, `crm`, `billing-db`). The wizard suggests idiomatic names (`billing-db-postgres`, `billing-db.ziti:5432`).
 2. **Hosting Server**: Create a new hosting identity named after the machine (or pick an existing identity), assign the host role attribute (`#billing-db-postgres-hosts`), and set the target forward address (`127.0.0.1:5432` when `ziti-edge-tunnel` runs on the server).
 3. **Users & Groups**: Choose a suggested role attribute group (`#dbas`, `#developers`, `#sre`, `#it-admins`, `#employees`, `#sales`, etc.) and either create a new user device identity (e.g., `jdoe-laptop`) or add existing identities so someone can always use the service immediately.
 4. **Review & Stage**: Queues `<service>.intercept.v1`, `<service>.host.v1`, the service, identities, `<service>-bind`, `<service>-dial`, and automatic Edge Router / Service Edge Router policies (only when existing router policies don't already cover them) into **Pending Changes**, complete with post-apply `ziti-edge-tunnel enroll` commands.
@@ -151,6 +151,12 @@ for f in assets/logo/*.svg assets/diagrams/*.svg; do
   rsvg-convert -w 2400 "$f" -o "${f%.svg}.png"
 done
 ```
+
+---
+
+## 🤝 Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the checks to run before a pull request, and how to regenerate the diagrams and logo.
 
 ---
 

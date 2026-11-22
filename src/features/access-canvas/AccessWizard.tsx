@@ -308,7 +308,7 @@ export const AccessWizard: React.FC<AccessWizardProps> = ({ open, model, newId =
                 <input
                   value={w.system}
                   onChange={(e) => resuggest(w.templateId, e.target.value, edited, w)}
-                  placeholder="e.g. loft-50, billing, crm-prod"
+                  placeholder="e.g. devbox, billing, crm-prod"
                   autoFocus
                   className="w-full px-3 py-2 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)] text-sm text-[var(--ac-ink)]"
                 />

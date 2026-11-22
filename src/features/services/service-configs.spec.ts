@@ -98,10 +98,10 @@ describe('service config rules', () => {
       },
       {
         id: 'c-ssh-ic',
-        name: 'loft-ssh.intercept.v1',
+        name: 'devbox-ssh.intercept.v1',
         configTypeId: 't-int',
         configType: { name: 'intercept.v1' },
-        data: { protocols: ['tcp'], addresses: ['loft-50.ziti'], portRanges: [{ low: 22, high: 22 }] },
+        data: { protocols: ['tcp'], addresses: ['devbox.ziti'], portRanges: [{ low: 22, high: 22 }] },
       },
     ];
 
@@ -121,8 +121,8 @@ describe('service config rules', () => {
       protocol: 'tcp',
     });
 
-    expect(describeServiceEndpoint({ name: 'loft-50-ssh', configs: ['c-ssh-ic'] }, cfgs)).toEqual({
-      interceptDisplay: 'loft-50.ziti:22',
+    expect(describeServiceEndpoint({ name: 'devbox-ssh', configs: ['c-ssh-ic'] }, cfgs)).toEqual({
+      interceptDisplay: 'devbox.ziti:22',
       hostDisplay: undefined,
       url: undefined,
       protocol: 'tcp',

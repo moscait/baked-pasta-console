@@ -1,8 +1,8 @@
 {
   "name": "baked-pasta-console",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "Baked Pasta Console - A modern, sleek, plug-compatible OpenZiti Admin Console featuring the Access Canvas & Guided Wizards",
+  "description": "Baked Pasta Console: a drop-in OpenZiti Admin Console with the Access Canvas and guided service wizards",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
@@ -41,5 +41,13 @@
     "typescript-eslint": "^8.73.0",
     "vite": "^6.1.0",
     "vitest": "^4.1.12"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moscait/baked-pasta-console.git"
+  },
+  "homepage": "https://github.com/moscait/baked-pasta-console#readme",
+  "bugs": {
+    "url": "https://github.com/moscait/baked-pasta-console/issues"
   }
 }

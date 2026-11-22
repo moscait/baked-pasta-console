@@ -10,7 +10,7 @@ function model(withRouterPolicies = true): AcModel {
       { id: 'i2', name: 'dev-macbook-pro', attrs: [], enrolled: false, online: false, isAdmin: false },
       { id: 'adm', name: 'admin', attrs: [], enrolled: true, online: false, isAdmin: true },
     ],
-    services: [{ id: 's1', name: 'loft-50-ssh', attrs: ['ssh'], configs: [] }],
+    services: [{ id: 's1', name: 'devbox-ssh', attrs: ['ssh'], configs: [] }],
     routers: [{ id: 'r1', name: 'router-instance-1', attrs: [], online: true }],
     servicePolicies: [],
     erPolicies: withRouterPolicies
@@ -58,12 +58,12 @@ describe('access-wizard.logic', () => {
   });
 
   it('rejects names that already exist and bad ports', () => {
-    const w = blankInput('ssh', 'loft-50');
+    const w = blankInput('ssh', 'devbox');
     w.interceptPort = 70000;
     const fields = validate(model(), w).map((c) => c.field);
     expect(fields).toContain('serviceName');
     expect(fields).toContain('interceptPort');
-    w.serviceName = 'loft-50-ssh2';
+    w.serviceName = 'devbox-ssh2';
     w.interceptPort = 22;
     expect(validate(model(), w).map((c) => c.field)).toEqual(['newUserName']);
     w.newUserName = 'jdoe-laptop';
@@ -222,19 +222,19 @@ describe('access-wizard.logic', () => {
 
   it('allows updating and repairing existing service, configs, and policies when reuseExisting is enabled', () => {
     const m = model();
-    m.configs = [{ id: 'cfg-ic', name: 'loft-50-ssh.intercept.v1' }];
+    m.configs = [{ id: 'cfg-ic', name: 'devbox-ssh.intercept.v1' }];
     m.servicePolicies = [
       {
         id: 'sp-bind',
-        name: 'loft-50-ssh-bind',
+        name: 'devbox-ssh-bind',
         type: 'Bind',
         semantic: 'AnyOf',
         identityRoles: ['#legacy-hosts'],
-        serviceRoles: ['#loft-50-ssh'],
+        serviceRoles: ['#devbox-ssh'],
         posture: [],
       },
     ];
-    const w = blankInput('ssh', 'loft-50');
+    const w = blankInput('ssh', 'devbox');
     w.hostMode = 'existing';
     w.hostId = 'i1';
     w.userMode = 'existing';
@@ -244,20 +244,20 @@ describe('access-wizard.logic', () => {
     expect(validate(m, w)).toEqual([]);
     const p = plan(m, w, ids());
 
-    const icOp = p.ops.find((o) => o.op === 'createConfig' && o.config.name === 'loft-50-ssh.intercept.v1') as any;
-    const hcOp = p.ops.find((o) => o.op === 'createConfig' && o.config.name === 'loft-50-ssh.host.v1') as any;
+    const icOp = p.ops.find((o) => o.op === 'createConfig' && o.config.name === 'devbox-ssh.intercept.v1') as any;
+    const hcOp = p.ops.find((o) => o.op === 'createConfig' && o.config.name === 'devbox-ssh.host.v1') as any;
     const svcOp = p.ops.find((o) => o.op === 'createService') as any;
     const bindOp = p.ops.find((o) => o.op === 'createPolicy' && o.policy.type === 'Bind') as any;
     expect(icOp.config.existingId).toBe('cfg-ic');
     expect(hcOp.config.existingId).toBeUndefined();
     expect(svcOp.service.existingId).toBe('s1');
-    expect(svcOp.service.attrs).toEqual(['ssh', 'loft-50-ssh']);
+    expect(svcOp.service.attrs).toEqual(['ssh', 'devbox-ssh']);
     expect(bindOp.policy.existingId).toBe('sp-bind');
-    expect(bindOp.policy.identityRoles).toEqual(['#legacy-hosts', '#loft-50-ssh-hosts']);
-    expect(p.items.find((it) => it.name === 'loft-50-ssh')?.existing).toBe(true);
+    expect(bindOp.policy.identityRoles).toEqual(['#legacy-hosts', '#devbox-ssh-hosts']);
+    expect(p.items.find((it) => it.name === 'devbox-ssh')?.existing).toBe(true);
 
     const after = applyOps(clone(m), p.ops);
-    expect(after.services.filter((s) => s.name === 'loft-50-ssh')).toHaveLength(1);
+    expect(after.services.filter((s) => s.name === 'devbox-ssh')).toHaveLength(1);
     expect(hostsFor(after, after.services.find((s) => s.id === 's1')!).map((h) => h.id)).toEqual(['i1']);
     expect(dialFor(after, after.identities.find((i) => i.id === 'i2')!, after.services.find((s) => s.id === 's1')!).length).toBe(1);
   });

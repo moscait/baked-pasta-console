@@ -158,8 +158,8 @@ def access_canvas(t):
         t,
         "Access Canvas · Free-form drag-and-drop board, policy hubs, and live reachability advisor",
         "Client identity groups (#employees, #sales, #ssh-users) connect through Dial policy hubs to zero-trust "
-        "service groups (#crm-https, #loft-50-ssh), which connect through Bind policy hubs to hosting identities "
-        "(#crm-https-hosts, #loft-50-hosts) and Edge Router policies underneath. A floating right drawer diagnoses "
+        "service groups (#crm-https, #devbox-ssh), which connect through Bind policy hubs to hosting identities "
+        "(#crm-https-hosts, #devbox-hosts) and Edge Router policies underneath. A floating right drawer diagnoses "
         "why an identity can or cannot reach a service and previews staged REST API calls.",
     )
     s.text(32, 40, "Access Canvas · Drag-and-drop groups, policy lines, and path advisor", size=19, weight=700)
@@ -248,19 +248,19 @@ def access_canvas(t):
 
     # Col 1: Dial Policy Hubs
     hub_pill(210, 181, 116, "DIAL", "crm-dial", "http")
-    hub_pill(210, 313, 116, "DIAL", "loft-dial", "http")
+    hub_pill(210, 313, 116, "DIAL", "devbox-dial", "http")
 
     # Col 2: Service Groups
     group_box(348, 158, 142, "S", "overlay", "crm-https", 1, [("crm-https", "ok")])
-    group_box(348, 290, 142, "S", "overlay", "loft-50-ssh", 1, [("loft-50-ssh", "ok")])
+    group_box(348, 290, 142, "S", "overlay", "devbox-ssh", 1, [("devbox-ssh", "ok")])
 
     # Col 3: Bind Policy Hubs
-    hub_pill(512, 181, 106, "BIND", "crm-bind", "overlay")
-    hub_pill(512, 313, 106, "BIND", "loft-bind", "overlay")
+    hub_pill(505, 181, 120, "BIND", "crm-bind", "overlay")
+    hub_pill(505, 313, 120, "BIND", "devbox-bind", "overlay")
 
     # Col 4: Hosting Identities
     group_box(638, 158, 148, "I", "http", "crm-hosts", 1, [("crm-prod-01", "ok")])
-    group_box(638, 290, 148, "I", "http", "loft-hosts", 1, [("loft-50", "ok")])
+    group_box(638, 290, 148, "I", "http", "devbox-hosts", 1, [("devbox", "ok")])
 
     # Bottom Router Band
     hub_pill(230, 495, 124, "ERP", "all-public", "router")
@@ -274,15 +274,15 @@ def access_canvas(t):
     s.add(f'<line x1="{dx}" y1="{dy + 34}" x2="{dx + dw}" y2="{dy + 34}" stroke="{t["card_line"]}" stroke-width="1"/>')
 
     s.add(f'<rect x="{dx + 12}" y="{dy + 44}" width="{dw - 24}" height="26" rx="6" fill="{t["inner"]}" stroke="{t["inner_line"]}"/>')
-    s.text(dx + 20, dy + 61, "bob-thinkpad → loft-50-ssh", size=10.5, weight=600, mono=True)
+    s.text(dx + 20, dy + 61, "bob-thinkpad → devbox-ssh", size=10.5, weight=600, mono=True)
 
     s.add(f'<rect x="{dx + 12}" y="{dy + 78}" width="{dw - 24}" height="28" rx="6" fill="{t["ok_bg"]}"/>')
     s.text(dx + 20, dy + 96, "✓ Path & routers verified", size=11, color="ok", weight=700)
 
     steps = [
-        ("ok", "Dial allowed", "by loft-50-ssh-dial"),
+        ("ok", "Dial allowed", "by devbox-ssh-dial"),
         ("pending", "Posture: MFA check", "TOTP required on connect"),
-        ("ok", "Service is hosted", "by loft-50 (enrolled)"),
+        ("ok", "Service is hosted", "by devbox (enrolled)"),
         ("ok", "Shared router online", "us-east-edge-01 (:8444)"),
         ("ok", "Host reaches router", "all-public ERP"),
     ]
