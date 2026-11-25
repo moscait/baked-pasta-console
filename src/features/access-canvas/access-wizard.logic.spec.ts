@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { AcModel, applyOps, clone, dialFor, hostsFor } from './access-canvas.logic';
 import { entityProblems } from './canvas-board.logic';
+import { findOp, isOp } from './test-helpers';
 import { blankInput, detectConflicts, plan, slugify, suggest, suggestAvailableServiceName, validate } from './access-wizard.logic';
 
 function model(withRouterPolicies = true): AcModel {
@@ -122,7 +123,7 @@ describe('access-wizard.logic', () => {
       const u = after.identities.find((i) => i.name === name)!;
       expect(dialFor(after, u, svc).map((x) => x.name)).toEqual(['crm-https-dial']);
     }
-    const cfg = p.ops.find((o) => o.op === 'createConfig' && o.config.type === 'intercept.v1') as any;
+    const cfg = findOp(p.ops, 'createConfig', (o) => o.config.type === 'intercept.v1');
     expect(cfg.config.data).toEqual({
       protocols: ['tcp'],
       addresses: ['crm.ziti'],
@@ -133,7 +134,7 @@ describe('access-wizard.logic', () => {
 
   it('adds router policies only when nothing covers the new pieces', () => {
     const p = plan(model(false), blankInput('ssh', 'web-01'), ids());
-    const names = p.ops.filter((o) => o.op === 'createSerp' || o.op === 'createErPolicy').map((o: any) => o.policy.name);
+    const names = p.ops.filter(isOp('createSerp', 'createErPolicy')).map((o) => o.policy.name);
     expect(names).toEqual(['web-01-ssh-routers', 'web-01-ssh-identities-routers']);
     const covered = plan(model(true), blankInput('ssh', 'web-01'), ids());
     expect(covered.ops.some((o) => o.op === 'createSerp' || o.op === 'createErPolicy')).toBe(false);
@@ -244,10 +245,10 @@ describe('access-wizard.logic', () => {
     expect(validate(m, w)).toEqual([]);
     const p = plan(m, w, ids());
 
-    const icOp = p.ops.find((o) => o.op === 'createConfig' && o.config.name === 'devbox-ssh.intercept.v1') as any;
-    const hcOp = p.ops.find((o) => o.op === 'createConfig' && o.config.name === 'devbox-ssh.host.v1') as any;
-    const svcOp = p.ops.find((o) => o.op === 'createService') as any;
-    const bindOp = p.ops.find((o) => o.op === 'createPolicy' && o.policy.type === 'Bind') as any;
+    const icOp = findOp(p.ops, 'createConfig', (o) => o.config.name === 'devbox-ssh.intercept.v1');
+    const hcOp = findOp(p.ops, 'createConfig', (o) => o.config.name === 'devbox-ssh.host.v1');
+    const svcOp = findOp(p.ops, 'createService');
+    const bindOp = findOp(p.ops, 'createPolicy', (o) => o.policy.type === 'Bind');
     expect(icOp.config.existingId).toBe('cfg-ic');
     expect(hcOp.config.existingId).toBeUndefined();
     expect(svcOp.service.existingId).toBe('s1');

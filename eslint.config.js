@@ -22,9 +22,4 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     },
   },
-  {
-    // Test fixtures may build partial objects loosely.
-    files: ['**/*.spec.ts'],
-    rules: { '@typescript-eslint/no-explicit-any': 'off' },
-  },
 );

@@ -16,14 +16,15 @@
 
 // Ported unchanged in behaviour from openziti/ziti-console 4.8.1
 // (projects/ziti-console-lib/src/lib/pages/config-builder/config-builder.model.ts), Apache-2.0.
-// Parsed YAML documents are untyped by nature, so `any` is used for them as upstream does.
-/* eslint-disable @typescript-eslint/no-explicit-any */
+// Retyped for this console: parsed documents are `YamlMap`s read through narrowing helpers
+// instead of `any`; emitted YAML is unchanged (see config-builder.roundtrip.spec.ts).
 
 // Model, defaults, validation and YAML emitter for an OpenZiti controller config (`v: 3`).
 // Defaults and ranges mirror the controller source (controller/config, controller/network).
 // Values equal to the controller default are omitted from the output unless `verbose` is set.
 
 import {parse as parseYaml} from 'yaml';
+import {YamlMap, YamlValue, asList, asMap, cloneMap, get, isObj, str} from './yaml-value';
 
 export type DeployMode ='standalone' | 'ha';
 
@@ -36,7 +37,7 @@ export interface BindPointIdentity {
     clientAuth: string;
     bindUsingEdgeIdentity: boolean;
     /** The ingested `identity` map, so keys the form does not manage survive a save. */
-    raw?: any;
+    raw?: YamlMap;
 }
 
 export const CLIENT_AUTH_POLICIES: { id: string; label: string }[] = [
@@ -55,7 +56,7 @@ export interface BindPoint {
     /** Set for an overlay bind point. `interface` and `address` are unused then. */
     identity?: BindPointIdentity;
     /** Other keys on an ingested overlay bind point. */
-    extra?: any;
+    extra?: YamlMap;
 }
 
 // `extra*`/`raw*` members carry content the form cannot edit, so an ingested file round-trips without loss.
@@ -65,10 +66,10 @@ export interface WebListener {
     apis: { [binding: string]: boolean };
     spaPath: string;
     spaLocation: string;
-    extra?: any;
-    extraApis?: any[];
-    apiOptions?: { [binding: string]: any };
-    spaExtra?: any;
+    extra?: YamlMap;
+    extraApis?: YamlValue[];
+    apiOptions?: { [binding: string]: YamlValue };
+    spaExtra?: YamlMap;
 }
 
 export interface EventLogger {
@@ -76,13 +77,13 @@ export interface EventLogger {
     subscriptions: string[];
     format: 'json' | 'cs';
     path: string;
-    rawSubs?: { [type: string]: any };
-    handlerRaw?: any;
+    rawSubs?: { [type: string]: YamlValue };
+    handlerRaw?: YamlValue;
 }
 
 export interface ControllerConfig {
     /** Parsed source document when a file was ingested; unmanaged keys pass through from here. */
-    base?: any;
+    base?: YamlMap;
     mode: DeployMode;
     trustDomain: string;
     identity: { cert: string; serverCert: string; key: string; ca: string };
@@ -204,6 +205,11 @@ export function defaultConfig(): ControllerConfig {
     };
 }
 
+/** An ingested event handler the form does not edit (not a file logger), passed through untouched. */
+function isCustomHandler(h: YamlValue | undefined): boolean {
+    return !!h && !(isObj(h) && h.type === 'file');
+}
+
 export interface ValidationIssue {
     section: string;
     level: 'error' | 'warn';
@@ -219,12 +225,11 @@ export function parseDuration(value: string): number {
     if (!value || !DURATION.test(value)) {
         return NaN;
     }
-    const unit: any = {ns: 1e-6, us: 1e-3, 'µs': 1e-3, ms: 1, s: 1e3, m: 6e4, h: 3.6e6};
+    const unit: Record<string, number> = {ns: 1e-6, us: 1e-3, 'µs': 1e-3, ms: 1, s: 1e3, m: 6e4, h: 3.6e6};
     let total = 0;
-    value.replace(/(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/g, (_m, n, u) => {
+    for (const [, n, u] of value.matchAll(/(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/g)) {
         total += parseFloat(n) * unit[u];
-        return '';
-    });
+    }
     return total;
 }
 
@@ -507,8 +512,7 @@ export function validate(c: ControllerConfig): ValidationIssue[] {
         if (!ev.subscriptions.length) {
             warn('events', `${label}: no subscriptions selected`);
         }
-        const customHandler = ev.handlerRaw && ev.handlerRaw.type !== 'file';
-        if (!customHandler) {
+        if (!isCustomHandler(ev.handlerRaw)) {
             path('events', `${label} file path`, ev.path, '');
         }
     });
@@ -536,7 +540,7 @@ function text(s: string): string {
     return s;
 }
 
-function scalar(v: any): string {
+function scalar(v: YamlValue): string {
     if (v === null) {
         return 'null';
     }
@@ -549,7 +553,7 @@ function scalar(v: any): string {
     return text(String(v));
 }
 
-function dump(value: any, indent: number, lines: string[]): void {
+function dump(value: YamlMap | YamlValue[], indent: number, lines: string[]): void {
     const pad = ' '.repeat(indent);
     if (Array.isArray(value)) {
         value.forEach(item => {
@@ -592,16 +596,15 @@ function dump(value: any, indent: number, lines: string[]): void {
 }
 
 /** Add `key: value` to `target` when it differs from the default, or when `verbose` is on. */
-function put(target: any, key: string, value: any, def: any, verbose: boolean) {
+function put(target: YamlMap, key: string, value: YamlValue, def: YamlValue, verbose: boolean) {
     if (verbose || value !== def) {
         target[key] = value;
     }
 }
 
 /** Emit an overlay bind point, starting from the ingested `identity` map so unmanaged keys survive. */
-function identityBindPoint(b: BindPoint): any {
-    const id = b.identity!;
-    const out: any = isObj(id.raw) ? JSON.parse(JSON.stringify(id.raw)) : {};
+function identityBindPoint(b: BindPoint, id: BindPointIdentity): YamlMap {
+    const out: YamlMap = id.raw ? cloneMap(id.raw) : {};
     delete out.file;
     delete out.env;
     out[id.source] = id.value;
@@ -625,8 +628,8 @@ function identityBindPoint(b: BindPoint): any {
     return {...(b.extra || {}), identity: out};
 }
 
-function parseIdentityBindPoint(b: any): BindPoint {
-    const {identity, ...extra} = b;
+function parseIdentityBindPoint(b: YamlMap, identity: YamlMap): BindPoint {
+    const {identity: _identity, ...extra} = b;
     const source = typeof identity.env === 'string' && typeof identity.file !== 'string' ? 'env' : 'file';
     return {
         interface: '',
@@ -636,18 +639,18 @@ function parseIdentityBindPoint(b: any): BindPoint {
             value: String(identity[source] ?? ''),
             service: String(identity.service ?? ''),
             clientAuth: String(identity.tlsClientAuthenticationPolicy ?? ''),
-            bindUsingEdgeIdentity: identity.listenOptions?.bindUsingEdgeIdentity === true,
+            bindUsingEdgeIdentity: get(identity, 'listenOptions', 'bindUsingEdgeIdentity') === true,
             raw: identity,
         },
         extra,
     };
 }
 
-export function buildDocument(c: ControllerConfig, verbose = false): any {
-    const doc: any = {v: 3};
+export function buildDocument(c: ControllerConfig, verbose = false): YamlMap {
+    const doc: YamlMap = {v: 3};
     const d = defaultConfig();
 
-    const identity: any = {cert: c.identity.cert, key: c.identity.key, ca: c.identity.ca};
+    const identity: YamlMap = {cert: c.identity.cert, key: c.identity.key, ca: c.identity.ca};
     if (c.identity.serverCert) {
         identity.server_cert = c.identity.serverCert;
     }
@@ -659,7 +662,7 @@ export function buildDocument(c: ControllerConfig, verbose = false): any {
     if (c.mode === 'standalone') {
         doc.db = c.db;
     } else {
-        const cl: any = {dataDir: c.cluster.dataDir};
+        const cl: YamlMap = {dataDir: c.cluster.dataDir};
         put(cl, 'preferredLeader', c.cluster.preferredLeader, d.cluster.preferredLeader, verbose);
         put(cl, 'snapshotInterval', c.cluster.snapshotInterval, d.cluster.snapshotInterval, verbose);
         put(cl, 'snapshotThreshold', c.cluster.snapshotThreshold, d.cluster.snapshotThreshold, verbose);
@@ -669,20 +672,21 @@ export function buildDocument(c: ControllerConfig, verbose = false): any {
         doc.cluster = cl;
     }
 
-    const options: any = {};
+    const options: YamlMap = {};
     if (c.ctrl.advertiseAddress) {
         options.advertiseAddress = c.ctrl.advertiseAddress;
     }
     put(options, 'connectTimeoutMs', c.ctrl.connectTimeoutMs, d.ctrl.connectTimeoutMs, verbose);
     put(options, 'maxQueuedConnects', c.ctrl.maxQueuedConnects, d.ctrl.maxQueuedConnects, verbose);
-    doc.ctrl = {listener: c.ctrl.listener};
+    const ctrl: YamlMap = {listener: c.ctrl.listener};
     if (Object.keys(options).length) {
-        doc.ctrl.options = options;
+        ctrl.options = options;
     }
+    doc.ctrl = ctrl;
 
     const n = c.network;
     const dn = d.network;
-    const net: any = {};
+    const net: YamlMap = {};
     put(net, 'cycleSeconds', n.cycleSeconds, dn.cycleSeconds, verbose);
     put(net, 'routeTimeoutSeconds', n.routeTimeoutSeconds, dn.routeTimeoutSeconds, verbose);
     put(net, 'createCircuitRetries', n.createCircuitRetries, dn.createCircuitRetries, verbose);
@@ -696,7 +700,7 @@ export function buildDocument(c: ControllerConfig, verbose = false): any {
         doc.network = net;
     }
 
-    const hc: any = {};
+    const hc: YamlMap = {};
     put(hc, 'interval', c.healthCheckInterval, d.healthCheckInterval, verbose);
     if (Object.keys(hc).length) {
         doc.healthChecks = {boltCheck: hc};
@@ -704,9 +708,9 @@ export function buildDocument(c: ControllerConfig, verbose = false): any {
 
     if (c.edge.enabled) {
         const e = c.edge;
-        const api: any = {address: e.apiAddress};
+        const api: YamlMap = {address: e.apiAddress};
         put(api, 'sessionTimeout', e.sessionTimeout, d.edge.sessionTimeout, verbose);
-        const enrollment: any = {signingCert: {cert: e.signingCert, key: e.signingKey}};
+        const enrollment: YamlMap = {signingCert: {cert: e.signingCert, key: e.signingKey}};
         const idDur = e.identityEnrollmentDuration !== d.edge.identityEnrollmentDuration;
         const rtDur = e.routerEnrollmentDuration !== d.edge.routerEnrollmentDuration;
         if (verbose || idDur) {
@@ -715,26 +719,27 @@ export function buildDocument(c: ControllerConfig, verbose = false): any {
         if (verbose || rtDur) {
             enrollment.edgeRouter = {duration: e.routerEnrollmentDuration};
         }
-        doc.edge = {api, enrollment};
+        const edge: YamlMap = {api, enrollment};
 
-        const oidc: any = {};
+        const oidc: YamlMap = {};
         put(oidc, 'accessTokenDuration', e.accessTokenDuration, d.edge.accessTokenDuration, verbose);
         put(oidc, 'refreshTokenDuration', e.refreshTokenDuration, d.edge.refreshTokenDuration, verbose);
         if (Object.keys(oidc).length) {
-            doc.edge.oidc = oidc;
+            edge.oidc = oidc;
         }
         if (e.totpHostname) {
-            doc.edge.totp = {hostname: e.totpHostname};
+            edge.totp = {hostname: e.totpHostname};
         }
         if (!e.authRateLimiter) {
-            doc.edge.authRateLimiter = {enabled: false};
+            edge.authRateLimiter = {enabled: false};
         } else if (verbose || e.authRateLimiterMax !== d.edge.authRateLimiterMax) {
-            doc.edge.authRateLimiter = {enabled: true, maxSize: e.authRateLimiterMax};
+            edge.authRateLimiter = {enabled: true, maxSize: e.authRateLimiterMax};
         }
+        doc.edge = edge;
     }
 
     doc.web = c.web.map(w => {
-        const apis: any[] = [];
+        const apis: YamlValue[] = [];
         API_BINDINGS.forEach(b => {
             if (!w.apis[b.id]) {
                 return;
@@ -753,7 +758,7 @@ export function buildDocument(c: ControllerConfig, verbose = false): any {
         apis.push(...(w.extraApis || []));
         return {
             name: w.name,
-            bindPoints: w.bindPoints.map(b => b.identity ? identityBindPoint(b) : ({
+            bindPoints: w.bindPoints.map((b): YamlMap => b.identity ? identityBindPoint(b, b.identity) : ({
                 interface: b.interface,
                 address: b.address,
                 ...(b.newAddress ? {newAddress: b.newAddress} : {}),
@@ -764,16 +769,17 @@ export function buildDocument(c: ControllerConfig, verbose = false): any {
     });
 
     if (c.events.length) {
-        const events: any = {};
+        const events: YamlMap = {};
         c.events.forEach(e => {
             if (!e.name) {
                 return;
             }
+            const h = e.handlerRaw;
             events[e.name] = {
                 subscriptions: e.subscriptions.map(type => e.rawSubs?.[type] ?? {type}),
-                handler: e.handlerRaw && e.handlerRaw.type !== 'file'
-                    ? e.handlerRaw
-                    : {...(e.handlerRaw || {}), type: 'file', format: e.format, path: e.path},
+                handler: isCustomHandler(h)
+                    ? h
+                    : {...asMap(h), type: 'file', format: e.format, path: e.path},
             };
         });
         doc.events = events;
@@ -781,35 +787,36 @@ export function buildDocument(c: ControllerConfig, verbose = false): any {
     return doc;
 }
 
-export const isObj = (v: any) => v !== null && typeof v === 'object' && !Array.isArray(v);
-
 /**
  * Keep a leaf when the source file had it or when it differs from the default, so a value the user
  * set back to its default still overwrites the stale one in the source.
  */
-function prune(full: any, minimal: any, raw: any): any {
-    const out: any = {};
+function prune(full: YamlMap, minimal: YamlMap, raw: YamlMap): YamlMap {
+    const out: YamlMap = {};
     Object.keys(full).forEach(k => {
         const f = full[k];
         if (isObj(f)) {
-            const sub = prune(f, minimal?.[k] ?? {}, raw?.[k] ?? {});
-            if (Object.keys(sub).length || (raw && k in raw) || (minimal && k in minimal)) {
+            // a scalar where the form has a section counts as absent rather than aborting the save
+            const sub = prune(f, asMap(minimal[k]), asMap(raw[k]));
+            if (Object.keys(sub).length || k in raw || k in minimal) {
                 out[k] = sub;
             }
-        } else if ((raw && k in raw) || (minimal && k in minimal)) {
+        } else if (k in raw || k in minimal) {
             out[k] = f;
         }
     });
     return out;
 }
 
-function merge(base: any, over: any): any {
-    const out: any = {...base};
+function merge(base: YamlMap, over: YamlMap): YamlMap {
+    const out: YamlMap = {...base};
     Object.keys(over).forEach(k => {
         if (k === '__proto__') {
             return;
         }
-        out[k] =isObj(over[k]) && isObj(base?.[k]) ? merge(base[k], over[k]) : over[k];
+        const o = over[k];
+        const b = base[k];
+        out[k] = isObj(o) && isObj(b) ? merge(b, o) : o;
     });
     return out;
 }
@@ -817,15 +824,16 @@ function merge(base: any, over: any): any {
 const MANAGED = ['v', 'identity', 'trustDomain', 'db', 'cluster', 'ctrl', 'network', 'healthChecks', 'edge', 'web', 'events'];
 
 /** Document to emit: ingested source with the form's values applied on top. */
-export function composeDocument(c: ControllerConfig, verbose = false): any {
+export function composeDocument(c: ControllerConfig, verbose = false): YamlMap {
     const minimal = buildDocument(c, verbose);
     if (!c.base) {
         return minimal;
     }
-    const base = {...c.base};
+    const base: YamlMap = {...c.base};
     if (isObj(base.identity) && !c.identity.serverCert) {
-        base.identity = {...base.identity};
-        delete base.identity.server_cert;
+        const identity = {...base.identity};
+        delete identity.server_cert;
+        base.identity = identity;
     }
     // switching HA <-> standalone must drop the other storage key
     delete base[c.mode === 'ha' ? 'db' : 'cluster'];
@@ -834,19 +842,24 @@ export function composeDocument(c: ControllerConfig, verbose = false): any {
     }
     // nested keys the form owns outright: cleared or toggled off means gone, not "keep the source value"
     const dropNested = (parent: string, key: string, emitted: boolean) => {
-        if (!emitted && isObj(base[parent]) && key in base[parent]) {
-            base[parent] = {...base[parent]};
-            delete base[parent][key];
+        const section = base[parent];
+        if (!emitted && isObj(section) && key in section) {
+            const copy = {...section};
+            delete copy[key];
+            base[parent] = copy;
         }
     };
-    dropNested('network', 'smart', !!minimal.network?.smart);
-    dropNested('edge', 'totp', !!minimal.edge?.totp);
-    if (isObj(base.ctrl) && isObj(base.ctrl.options) && !c.ctrl.advertiseAddress) {
-        base.ctrl = {...base.ctrl, options: {...base.ctrl.options}};
-        delete base.ctrl.options.advertiseAddress;
-        if (!Object.keys(base.ctrl.options).length) {
-            delete base.ctrl.options;
+    dropNested('network', 'smart', !!get(minimal, 'network', 'smart'));
+    dropNested('edge', 'totp', !!get(minimal, 'edge', 'totp'));
+    const baseCtrl = base.ctrl;
+    if (isObj(baseCtrl) && isObj(baseCtrl.options) && !c.ctrl.advertiseAddress) {
+        const options = {...baseCtrl.options};
+        delete options.advertiseAddress;
+        const ctrl: YamlMap = {...baseCtrl, options};
+        if (!Object.keys(options).length) {
+            delete ctrl.options;
         }
+        base.ctrl = ctrl;
     }
     const kept = prune(buildDocument(c, true), minimal, base);
     // managed keys the form no longer produces (e.g. emptied trustDomain) must not linger
@@ -865,7 +878,7 @@ export function composeDocument(c: ControllerConfig, verbose = false): any {
 
 /** Parse controller YAML into the form model. Unknown content is retained for round-tripping. */
 export function fromYaml(text: string): { cfg: ControllerConfig; warnings: string[] } {
-    const doc: any = parseYaml(text);
+    const doc: unknown = parseYaml(text);
     if (!isObj(doc)) {
         throw new Error('The file is not a YAML mapping');
     }
@@ -875,18 +888,18 @@ export function fromYaml(text: string): { cfg: ControllerConfig; warnings: strin
     }
     const c = defaultConfig();
     c.base = doc;
-    const s = (v: any, def: string) => (v === undefined || v === null ? def : String(v));
-    const n = (v: any, def: number) => (typeof v === 'number' ? v : def);
+    const s = str;
+    const n = (v: YamlValue | undefined, def: number) => (typeof v === 'number' ? v : def);
 
     c.trustDomain = s(doc.trustDomain, '');
-    const id = doc.identity || {};
+    const id = asMap(doc.identity);
     c.identity = {
         cert: s(id.cert, ''), serverCert: s(id.server_cert, ''), key: s(id.key, ''), ca: s(id.ca, ''),
     };
 
     if (doc.cluster) {
         c.mode = 'ha';
-        const cl = doc.cluster;
+        const cl = asMap(doc.cluster);
         c.cluster = {
             dataDir: s(cl.dataDir, ''),
             preferredLeader: cl.preferredLeader === true,
@@ -900,8 +913,8 @@ export function fromYaml(text: string): { cfg: ControllerConfig; warnings: strin
         c.db = s(doc.db, '');
     }
 
-    const ctrl = doc.ctrl || {};
-    const opts = ctrl.options || {};
+    const ctrl = asMap(doc.ctrl);
+    const opts = asMap(ctrl.options);
     c.ctrl = {
         listener: s(ctrl.listener, ''),
         advertiseAddress: s(opts.advertiseAddress, ''),
@@ -909,7 +922,7 @@ export function fromYaml(text: string): { cfg: ControllerConfig; warnings: strin
         maxQueuedConnects: n(opts.maxQueuedConnects, c.ctrl.maxQueuedConnects),
     };
 
-    const net = doc.network || {};
+    const net = asMap(doc.network);
     const dn = c.network;
     c.network = {
         cycleSeconds: n(net.cycleSeconds, dn.cycleSeconds),
@@ -919,82 +932,90 @@ export function fromYaml(text: string): { cfg: ControllerConfig; warnings: strin
         minRouterCost: n(net.minRouterCost, dn.minRouterCost),
         routerConnectChurnLimit: s(net.routerConnectChurnLimit, dn.routerConnectChurnLimit),
         smartReroute: isObj(net.smart),
-        rerouteFraction: n(net.smart?.rerouteFraction, dn.rerouteFraction),
-        rerouteCap: n(net.smart?.rerouteCap, dn.rerouteCap),
+        rerouteFraction: n(get(net, 'smart', 'rerouteFraction'), dn.rerouteFraction),
+        rerouteCap: n(get(net, 'smart', 'rerouteCap'), dn.rerouteCap),
     };
 
-    c.healthCheckInterval = s(doc.healthChecks?.boltCheck?.interval, c.healthCheckInterval);
+    c.healthCheckInterval = s(get(doc, 'healthChecks', 'boltCheck', 'interval'), c.healthCheckInterval);
 
     // the builder always manages the edge block; a fabric-only file gains one with the defaults below
-    const e = isObj(doc.edge) ? doc.edge : {};
+    const e = asMap(doc.edge);
     {
         const de = c.edge;
         c.edge = {
             enabled: true,
-            apiAddress: s(e.api?.address, ''),
-            sessionTimeout: s(e.api?.sessionTimeout, de.sessionTimeout),
-            signingCert: s(e.enrollment?.signingCert?.cert, ''),
-            signingKey: s(e.enrollment?.signingCert?.key, ''),
-            identityEnrollmentDuration: s(e.enrollment?.edgeIdentity?.duration, de.identityEnrollmentDuration),
-            routerEnrollmentDuration: s(e.enrollment?.edgeRouter?.duration, de.routerEnrollmentDuration),
-            accessTokenDuration: s(e.oidc?.accessTokenDuration, de.accessTokenDuration),
-            refreshTokenDuration: s(e.oidc?.refreshTokenDuration, de.refreshTokenDuration),
-            authRateLimiter: e.authRateLimiter?.enabled !== false,
-            authRateLimiterMax: n(e.authRateLimiter?.maxSize, de.authRateLimiterMax),
-            totpHostname: s(e.totp?.hostname, ''),
+            apiAddress: s(get(e, 'api', 'address'), ''),
+            sessionTimeout: s(get(e, 'api', 'sessionTimeout'), de.sessionTimeout),
+            signingCert: s(get(e, 'enrollment', 'signingCert', 'cert'), ''),
+            signingKey: s(get(e, 'enrollment', 'signingCert', 'key'), ''),
+            identityEnrollmentDuration: s(get(e, 'enrollment', 'edgeIdentity', 'duration'), de.identityEnrollmentDuration),
+            routerEnrollmentDuration: s(get(e, 'enrollment', 'edgeRouter', 'duration'), de.routerEnrollmentDuration),
+            accessTokenDuration: s(get(e, 'oidc', 'accessTokenDuration'), de.accessTokenDuration),
+            refreshTokenDuration: s(get(e, 'oidc', 'refreshTokenDuration'), de.refreshTokenDuration),
+            authRateLimiter: get(e, 'authRateLimiter', 'enabled') !== false,
+            authRateLimiterMax: n(get(e, 'authRateLimiter', 'maxSize'), de.authRateLimiterMax),
+            totpHostname: s(get(e, 'totp', 'hostname'), ''),
         };
     }
 
     const known = API_BINDINGS.map(b => b.id);
-    c.web = (Array.isArray(doc.web) ? doc.web : []).map((w: any) => {
-        const {name, bindPoints, apis, ...extra} = w || {};
+    c.web = asList(doc.web).map(w => {
+        const {name, bindPoints, apis, ...extra} = asMap(w);
         const listener: WebListener = {
             name: s(name, ''),
-            bindPoints: (Array.isArray(bindPoints) ? bindPoints : []).map((b: any) => isObj(b?.identity)
-                ? parseIdentityBindPoint(b)
-                : ({
-                    interface: s(b?.interface, ''), address: s(b?.address, ''),
-                    ...(b?.newAddress ? {newAddress: String(b.newAddress)} : {}),
-                })),
+            bindPoints: asList(bindPoints).map(b => {
+                const bp = asMap(b);
+                return isObj(bp.identity)
+                    ? parseIdentityBindPoint(bp, bp.identity)
+                    : {
+                        interface: s(bp.interface, ''), address: s(bp.address, ''),
+                        ...(bp.newAddress ? {newAddress: String(bp.newAddress)} : {}),
+                    };
+            }),
             apis: {},
             spaPath: 'zac',
             spaLocation: '',
             extra,
-            extraApis: [],
-            apiOptions: {},
         };
-        (Array.isArray(apis) ? apis : []).forEach((a: any) => {
-            if (known.includes(a?.binding)) {
-                listener.apis[a.binding] = true;
-                if (a.binding === 'spa') {
-                    const {path, location, ...rest} = a.options || {};
+        const extraApis: YamlValue[] = [];
+        const apiOptions: { [binding: string]: YamlValue } = {};
+        asList(apis).forEach(a => {
+            const binding = get(a, 'binding');
+            const options = get(a, 'options');
+            if (typeof binding === 'string' && known.includes(binding)) {
+                listener.apis[binding] = true;
+                if (binding === 'spa') {
+                    const {path, location, ...rest} = asMap(options);
                     listener.spaPath = s(path, 'zac');
                     listener.spaLocation = s(location, '');
                     listener.spaExtra = rest;
-                } else if (a.options) {
-                    listener.apiOptions![a.binding] = a.options;
+                } else if (options) {
+                    apiOptions[binding] = options;
                 }
             } else {
-                listener.extraApis!.push(a);
-                warnings.push(`kept unrecognized API binding "${a?.binding}" as-is`);
+                extraApis.push(a);
+                warnings.push(`kept unrecognized API binding "${binding}" as-is`);
             }
         });
+        listener.extraApis = extraApis;
+        listener.apiOptions = apiOptions;
         return listener;
     });
 
-    c.events = isObj(doc.events) ? Object.keys(doc.events).map(name => {
-        const ev = doc.events[name] || {};
-        const subs = Array.isArray(ev.subscriptions) ? ev.subscriptions : [];
-        const rawSubs: any = {};
-        subs.forEach((x: any) => rawSubs[x?.type] = x);
+    const events = doc.events;
+    c.events = isObj(events) ? Object.keys(events).map((name): EventLogger => {
+        const ev = asMap(events[name]);
+        const subs = asList(ev.subscriptions);
+        const rawSubs: { [type: string]: YamlValue } = {};
+        subs.forEach(x => rawSubs[String(get(x, 'type'))] = x);
         return {
             name,
-            subscriptions: subs.map((x: any) => String(x?.type)),
-            format: ev.handler?.format === 'cs' ? 'cs' : 'json',
-            path: s(ev.handler?.path, ''),
+            subscriptions: subs.map(x => String(get(x, 'type'))),
+            format: get(ev, 'handler', 'format') === 'cs' ? 'cs' : 'json',
+            path: s(get(ev, 'handler', 'path'), ''),
             rawSubs,
             handlerRaw: ev.handler,
-        } as EventLogger;
+        };
     }) : [];
 
     const unmanaged = Object.keys(doc).filter(k => !MANAGED.includes(k));
@@ -1005,7 +1026,7 @@ export function fromYaml(text: string): { cfg: ControllerConfig; warnings: strin
 }
 
 /** Emit a document with a comment header and a blank line between top-level sections. */
-export function dumpDocument(doc: any, header: string[]): string {
+export function dumpDocument(doc: YamlMap, header: string[]): string {
     const lines: string[] = [...header, ''];
     Object.keys(doc).forEach((key, i) => {
         if (i > 0) {

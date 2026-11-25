@@ -16,8 +16,8 @@
 
 // Ported unchanged in behaviour from openziti/ziti-console 4.8.1
 // (projects/ziti-console-lib/src/lib/pages/config-builder/router-config.model.ts), Apache-2.0.
-// Parsed YAML documents are untyped by nature, so `any` is used for them as upstream does.
-/* eslint-disable @typescript-eslint/no-explicit-any */
+// Retyped for this console: parsed documents are `YamlMap`s read through narrowing helpers
+// instead of `any`; emitted YAML is unchanged (see config-builder.roundtrip.spec.ts).
 
 // Model, validation and YAML emitter for an OpenZiti router config (`v: 3`).
 // Key names follow router/env/config.go and the `ziti create config router` template.
@@ -31,16 +31,16 @@ import {
     checkHostPort,
     checkPath,
     dumpDocument,
-    isObj,
     parseDuration,
 } from './controller-config.model';
+import {YamlMap, YamlValue, asList, asMap, cloneMap, get, isObj, str} from './yaml-value';
 
 export type TunnelMode = 'tproxy' | 'host' | 'proxy';
 export type ConfigKind = 'controller' | 'router';
 
 export interface RouterConfig {
     /** Parsed source document when a file was ingested. */
-    base?: any;
+    base?: YamlMap;
     /** The source listed controllers under `ctrl.endpoints` rather than the single `ctrl.endpoint`. */
     ctrlList: boolean;
     /** The source kept its CSR at top level (fabric-only template) instead of under `edge`. */
@@ -130,25 +130,27 @@ export function defaultRouterConfig(): RouterConfig {
  * Decide whether a parsed config belongs to a controller or a router.
  * Both use `v: 3`, `identity` and `ctrl`, so the call rests on keys only one of them has.
  */
-export function detectKind(doc: any): ConfigKind | 'unknown' {
+export function detectKind(doc: unknown): ConfigKind | 'unknown' {
     if (!isObj(doc)) {
         return 'unknown';
     }
     const has = (k: string) => k in doc;
+    const edge = asMap(doc.edge);
+    const ctrl = asMap(doc.ctrl);
     let controller = 0;
     let router = 0;
     ['db', 'cluster', 'web', 'network', 'events', 'trustDomain', 'healthChecks'].forEach(k => has(k) && controller++);
-    if (isObj(doc.edge) && (doc.edge.api || doc.edge.enrollment)) {
+    if (edge.api || edge.enrollment) {
         controller += 2;
     }
-    if (isObj(doc.ctrl) && doc.ctrl.listener) {
+    if (ctrl.listener) {
         controller += 2;
     }
     ['link', 'listeners', 'forwarder', 'csr', 'dialers'].forEach(k => has(k) && router++);
-    if (isObj(doc.edge) && doc.edge.csr) {
+    if (edge.csr) {
         router += 2;
     }
-    if (isObj(doc.ctrl) && (doc.ctrl.endpoint || doc.ctrl.endpoints || doc.ctrl.endpointsFile)) {
+    if (ctrl.endpoint || ctrl.endpoints || ctrl.endpointsFile) {
         router += 2;
     }
     if (controller === router) {
@@ -324,10 +326,8 @@ export function validateRouter(c: RouterConfig): ValidationIssue[] {
 
 // ---- document building -------------------------------------------------------------------------
 
-const clone = (v: any) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
-
 /** Set `obj[key]`, or remove it when the value is empty. */
-function setOrDel(obj: any, key: string, value: any) {
+function setOrDel(obj: YamlMap, key: string, value: YamlValue | undefined) {
     if (value === '' || value === null || value === undefined) {
         delete obj[key];
     } else {
@@ -342,7 +342,7 @@ function cleanList(list: string[]): string[] | '' {
 }
 
 /** Find the entry with `binding` in a list, or add one, and return it; null removes it. */
-function upsertBinding(list: any[], binding: string, enabled: boolean): any | null {
+function upsertBinding(list: YamlValue[], binding: string, enabled: boolean): YamlMap | null {
     const i = list.findIndex(x => isObj(x) && x.binding === binding);
     if (!enabled) {
         if (i >= 0) {
@@ -350,52 +350,59 @@ function upsertBinding(list: any[], binding: string, enabled: boolean): any | nu
         }
         return null;
     }
-    if (i >= 0) {
-        return list[i];
+    const found = list[i];
+    if (isObj(found)) {
+        return found;
     }
-    const entry = {binding};
+    const entry: YamlMap = {binding};
     list.push(entry);
     return entry;
 }
 
-function prune(obj: any, key: string) {
-    if (isObj(obj[key]) && !Object.keys(obj[key]).length) {
-        delete obj[key];
-    }
-    if (Array.isArray(obj[key]) && !obj[key].length) {
+/** Drop `obj[key]` when it is an empty map or list. */
+function prune(obj: YamlMap, key: string) {
+    const v = obj[key];
+    if ((isObj(v) && !Object.keys(v).length) || (Array.isArray(v) && !v.length)) {
         delete obj[key];
     }
 }
 
-export function buildRouterDocument(c: RouterConfig): any {
-    const doc: any = c.base ? clone(c.base) : {};
+/** `parent[key]` as a map, replacing anything else there with an empty one. */
+function mapIn(parent: YamlMap, key: string): YamlMap {
+    const m = asMap(parent[key]);
+    parent[key] = m;
+    return m;
+}
+
+export function buildRouterDocument(c: RouterConfig): YamlMap {
+    const doc: YamlMap = c.base ? cloneMap(c.base) : {};
     if (doc.v === undefined) {
         doc.v = 3;
     }
 
     // identity
-    doc.identity = isObj(doc.identity) ? doc.identity : {};
-    doc.identity.cert = c.identity.cert;
-    setOrDel(doc.identity, 'server_cert', c.identity.serverCert);
-    doc.identity.key = c.identity.key;
-    doc.identity.ca = c.identity.ca;
+    const identity = mapIn(doc, 'identity');
+    identity.cert = c.identity.cert;
+    setOrDel(identity, 'server_cert', c.identity.serverCert);
+    identity.key = c.identity.key;
+    identity.ca = c.identity.ca;
 
     // ctrl: one controller reads naturally as `endpoint`, several need `endpoints`
-    doc.ctrl = isObj(doc.ctrl) ? doc.ctrl : {};
+    const ctrl = mapIn(doc, 'ctrl');
     const eps = c.ctrl.endpoints.filter(e => e !== '');
-    delete doc.ctrl.endpoint;
-    delete doc.ctrl.endpoints;
+    delete ctrl.endpoint;
+    delete ctrl.endpoints;
     if (eps.length === 1 && !c.ctrlList) {
-        doc.ctrl.endpoint = eps[0];
+        ctrl.endpoint = eps[0];
     } else if (eps.length) {
-        doc.ctrl.endpoints = eps;
+        ctrl.endpoints = eps;
     }
-    setOrDel(doc.ctrl, 'endpointsFile', c.ctrl.endpointsFile);
+    setOrDel(ctrl, 'endpointsFile', c.ctrl.endpointsFile);
 
     // link
-    const link: any = isObj(doc.link) ? doc.link : {};
-    const dialers: any[] = Array.isArray(link.dialers) ? link.dialers : [];
-    const lListeners: any[] = Array.isArray(link.listeners) ? link.listeners : [];
+    const link = asMap(doc.link);
+    const dialers = asList(link.dialers);
+    const lListeners = asList(link.listeners);
     const dl = upsertBinding(dialers, 'transport', c.link.dial);
     if (dl) {
         setOrDel(dl, 'groups', cleanList(c.link.dialGroups));
@@ -405,8 +412,7 @@ export function buildRouterDocument(c: RouterConfig): any {
         setOrDel(ll, 'groups', cleanList(c.link.listenGroups));
         ll.bind = c.link.bind;
         ll.advertise = c.link.advertise;
-        ll.options = isObj(ll.options) ? ll.options : {};
-        setOrDel(ll.options, 'outQueueSize', c.link.outQueueSize);
+        setOrDel(mapIn(ll, 'options'), 'outQueueSize', c.link.outQueueSize);
         prune(ll, 'options');
     }
     link.dialers = dialers;
@@ -417,40 +423,40 @@ export function buildRouterDocument(c: RouterConfig): any {
     prune(doc, 'link');
 
     // edge + tunnel listeners
-    const listeners: any[] = Array.isArray(doc.listeners) ? doc.listeners : [];
+    const listeners = asList(doc.listeners);
     const el = upsertBinding(listeners, 'edge', c.edge.enabled);
     if (el) {
         el.address = c.edge.address;
-        el.options = isObj(el.options) ? el.options : {};
-        el.options.advertise = c.edge.advertise;
-        setOrDel(el.options, 'connectTimeoutMs', c.edge.connectTimeoutMs);
-        setOrDel(el.options, 'getSessionTimeout', c.edge.getSessionTimeout);
+        const options = mapIn(el, 'options');
+        options.advertise = c.edge.advertise;
+        setOrDel(options, 'connectTimeoutMs', c.edge.connectTimeoutMs);
+        setOrDel(options, 'getSessionTimeout', c.edge.getSessionTimeout);
     }
     const tl = upsertBinding(listeners, 'tunnel', c.tunnel.enabled);
     if (tl) {
-        tl.options = isObj(tl.options) ? tl.options : {};
-        tl.options.mode = c.tunnel.mode;
+        const options = mapIn(tl, 'options');
+        options.mode = c.tunnel.mode;
         const tproxy = c.tunnel.mode === 'tproxy';
-        setOrDel(tl.options, 'resolver', tproxy ? c.tunnel.resolver : '');
-        setOrDel(tl.options, 'lanIf', tproxy ? c.tunnel.lanIf : '');
-        setOrDel(tl.options, 'dnsSvcIpRange', tproxy ? c.tunnel.dnsSvcIpRange : '');
+        setOrDel(options, 'resolver', tproxy ? c.tunnel.resolver : '');
+        setOrDel(options, 'lanIf', tproxy ? c.tunnel.lanIf : '');
+        setOrDel(options, 'dnsSvcIpRange', tproxy ? c.tunnel.dnsSvcIpRange : '');
     }
     doc.listeners = listeners;
     prune(doc, 'listeners');
 
     // CSR lives under `edge` (the fabric-only template keeps it at top level)
     const wantCsr = c.edge.enabled || c.tunnel.enabled;
-    const holder: any = c.csrTop ? doc : (doc.edge = isObj(doc.edge) ? doc.edge : {});
+    const holder = c.csrTop ? doc : mapIn(doc, 'edge');
     if (wantCsr) {
-        const csr: any = isObj(holder.csr) ? holder.csr : {};
+        const csr = asMap(holder.csr);
         setOrDel(csr, 'country', c.csr.country);
         setOrDel(csr, 'province', c.csr.province);
         setOrDel(csr, 'locality', c.csr.locality);
         setOrDel(csr, 'organization', c.csr.organization);
         setOrDel(csr, 'organizationalUnit', c.csr.organizationalUnit);
-        csr.sans = isObj(csr.sans) ? csr.sans : {};
-        setOrDel(csr.sans, 'dns', c.csr.dns.length ? c.csr.dns : '');
-        setOrDel(csr.sans, 'ip', c.csr.ip.length ? c.csr.ip : '');
+        const sans = mapIn(csr, 'sans');
+        setOrDel(sans, 'dns', c.csr.dns.length ? c.csr.dns : '');
+        setOrDel(sans, 'ip', c.csr.ip.length ? c.csr.ip : '');
         prune(csr, 'sans');
         holder.csr = csr;
     }
@@ -460,7 +466,7 @@ export function buildRouterDocument(c: RouterConfig): any {
     }
 
     // advanced
-    const fwd: any = isObj(doc.forwarder) ? doc.forwarder : {};
+    const fwd = asMap(doc.forwarder);
     setOrDel(fwd, 'xgressDialQueueLength', c.forwarder.xgressDialQueueLength);
     setOrDel(fwd, 'xgressDialWorkerCount', c.forwarder.xgressDialWorkerCount);
     setOrDel(fwd, 'linkDialQueueLength', c.forwarder.linkDialQueueLength);
@@ -468,20 +474,20 @@ export function buildRouterDocument(c: RouterConfig): any {
     doc.forwarder = fwd;
     prune(doc, 'forwarder');
 
-    const met: any = isObj(doc.metrics) ? doc.metrics : {};
+    const met = asMap(doc.metrics);
     setOrDel(met, 'reportInterval', c.metrics.reportInterval);
     setOrDel(met, 'messageQueueSize', c.metrics.messageQueueSize);
     doc.metrics = met;
     prune(doc, 'metrics');
 
-    const hc: any = isObj(doc.healthChecks) ? doc.healthChecks : {};
-    const ping: any = isObj(hc.ctrlPingCheck) ? hc.ctrlPingCheck : {};
+    const hc = asMap(doc.healthChecks);
+    const ping = asMap(hc.ctrlPingCheck);
     setOrDel(ping, 'interval', c.health.ctrlPingInterval);
     setOrDel(ping, 'timeout', c.health.ctrlPingTimeout);
     setOrDel(ping, 'initialDelay', c.health.ctrlPingInitialDelay);
     hc.ctrlPingCheck = ping;
     prune(hc, 'ctrlPingCheck');
-    const lc: any = isObj(hc.linkCheck) ? hc.linkCheck : {};
+    const lc = asMap(hc.linkCheck);
     setOrDel(lc, 'minLinks', c.health.minLinks);
     hc.linkCheck = lc;
     prune(hc, 'linkCheck');
@@ -491,7 +497,7 @@ export function buildRouterDocument(c: RouterConfig): any {
     // fresh documents keep a readable section order
     if (!c.base) {
         const order = ['v', 'identity', 'ctrl', 'link', 'listeners', 'edge', 'csr', 'forwarder', 'metrics', 'healthChecks'];
-        const sorted: any = {};
+        const sorted: YamlMap = {};
         order.forEach(k => k in doc && (sorted[k] = doc[k]));
         Object.keys(doc).forEach(k => k in sorted || (sorted[k] = doc[k]));
         return sorted;
@@ -508,30 +514,32 @@ export function routerToYaml(c: RouterConfig): string {
 
 // ---- ingest ------------------------------------------------------------------------------------
 
-export function routerFromDocument(doc: any): { cfg: RouterConfig; warnings: string[] } {
+const isTunnelMode = (v: YamlValue | undefined): v is TunnelMode => TUNNEL_MODES.some(m => m.id === v);
+
+export function routerFromDocument(doc: YamlMap): { cfg: RouterConfig; warnings: string[] } {
     const warnings: string[] = [];
     if (doc.v !== 3) {
         warnings.push(`config version is ${doc.v ?? 'missing'}; routers expect v: 3`);
     }
     const c = defaultRouterConfig();
     c.base = doc;
-    const s = (v: any, def = '') => (v === undefined || v === null ? def : String(v));
-    const n = (v: any): number | null => (typeof v === 'number' ? v : null);
-    const strs = (v: any): string[] => (Array.isArray(v) ? v.map(x => String(x)) : []);
+    const s = str;
+    const n = (v: YamlValue | undefined): number | null => (typeof v === 'number' ? v : null);
+    const strs = (v: YamlValue | undefined): string[] => asList(v).map(x => String(x));
 
-    const id = doc.identity || {};
+    const id = asMap(doc.identity);
     c.identity = {cert: s(id.cert), serverCert: s(id.server_cert), key: s(id.key), ca: s(id.ca)};
 
-    const ctrl = doc.ctrl || {};
+    const ctrl = asMap(doc.ctrl);
     c.ctrlList = Array.isArray(ctrl.endpoints);
     c.ctrl = {
         endpoints: c.ctrlList ? strs(ctrl.endpoints) : (ctrl.endpoint ? [s(ctrl.endpoint)] : []),
         endpointsFile: s(ctrl.endpointsFile),
     };
 
-    const link = doc.link || {};
-    const find = (list: any, binding: string) =>
-        (Array.isArray(list) ? list : []).find((x: any) => isObj(x) && x.binding === binding);
+    const link = asMap(doc.link);
+    const find = (list: YamlValue | undefined, binding: string) =>
+        asList(list).find((x): x is YamlMap => isObj(x) && x.binding === binding);
     const ll = find(link.listeners, 'transport');
     const dl = find(link.dialers, 'transport');
     c.link = {
@@ -541,14 +549,14 @@ export function routerFromDocument(doc: any): { cfg: RouterConfig; warnings: str
         listen: !!ll,
         bind: s(ll?.bind),
         advertise: s(ll?.advertise),
-        outQueueSize: n(ll?.options?.outQueueSize),
+        outQueueSize: n(get(ll, 'options', 'outQueueSize')),
     };
-    if (Array.isArray(link.dialers) && link.dialers.some((d: any) => d?.binding !== 'transport')) {
+    if (asList(link.dialers).some(d => get(d, 'binding') !== 'transport')) {
         warnings.push('kept non-transport link dialers as-is');
     }
 
     const el = find(doc.listeners, 'edge');
-    const eo = el?.options || {};
+    const eo = asMap(el?.options);
     c.edge = {
         enabled: !!el,
         address: s(el?.address),
@@ -557,42 +565,41 @@ export function routerFromDocument(doc: any): { cfg: RouterConfig; warnings: str
         getSessionTimeout: n(eo.getSessionTimeout),
     };
     const tl = find(doc.listeners, 'tunnel');
-    const to = tl?.options || {};
+    const to = asMap(tl?.options);
     c.tunnel = {
         enabled: !!tl,
-        mode: ['tproxy', 'host', 'proxy'].includes(to.mode) ? to.mode : 'tproxy',
+        mode: isTunnelMode(to.mode) ? to.mode : 'tproxy',
         resolver: s(to.resolver),
         lanIf: s(to.lanIf),
         dnsSvcIpRange: s(to.dnsSvcIpRange),
     };
-    const others = (Array.isArray(doc.listeners) ? doc.listeners : [])
-        .filter((x: any) => x?.binding !== 'edge' && x?.binding !== 'tunnel').map((x: any) => x?.binding);
+    const others = asList(doc.listeners).map(x => get(x, 'binding')).filter(b => b !== 'edge' && b !== 'tunnel');
     c.otherListeners = others.map(String);
     if (others.length) {
         warnings.push(`kept other listeners as-is: ${others.join(', ')}`);
     }
 
-    c.csrTop = !isObj(doc.edge?.csr) && isObj(doc.csr);
-    const csr = (c.csrTop ? doc.csr : doc.edge?.csr) || {};
+    c.csrTop = !isObj(get(doc, 'edge', 'csr')) && isObj(doc.csr);
+    const csr = asMap(c.csrTop ? doc.csr : get(doc, 'edge', 'csr'));
     c.csr = {
         country: s(csr.country), province: s(csr.province), locality: s(csr.locality),
         organization: s(csr.organization), organizationalUnit: s(csr.organizationalUnit),
-        dns: strs(csr.sans?.dns), ip: strs(csr.sans?.ip),
+        dns: strs(get(csr, 'sans', 'dns')), ip: strs(get(csr, 'sans', 'ip')),
     };
 
-    const f = doc.forwarder || {};
+    const f = asMap(doc.forwarder);
     c.forwarder = {
         xgressDialQueueLength: n(f.xgressDialQueueLength),
         xgressDialWorkerCount: n(f.xgressDialWorkerCount),
         linkDialQueueLength: n(f.linkDialQueueLength),
         linkDialWorkerCount: n(f.linkDialWorkerCount),
     };
-    c.metrics = {reportInterval: s(doc.metrics?.reportInterval), messageQueueSize: n(doc.metrics?.messageQueueSize)};
+    c.metrics = {reportInterval: s(get(doc, 'metrics', 'reportInterval')), messageQueueSize: n(get(doc, 'metrics', 'messageQueueSize'))};
     c.health = {
-        ctrlPingInterval: s(doc.healthChecks?.ctrlPingCheck?.interval),
-        ctrlPingTimeout: s(doc.healthChecks?.ctrlPingCheck?.timeout),
-        ctrlPingInitialDelay: s(doc.healthChecks?.ctrlPingCheck?.initialDelay),
-        minLinks: n(doc.healthChecks?.linkCheck?.minLinks),
+        ctrlPingInterval: s(get(doc, 'healthChecks', 'ctrlPingCheck', 'interval')),
+        ctrlPingTimeout: s(get(doc, 'healthChecks', 'ctrlPingCheck', 'timeout')),
+        ctrlPingInitialDelay: s(get(doc, 'healthChecks', 'ctrlPingCheck', 'initialDelay')),
+        minLinks: n(get(doc, 'healthChecks', 'linkCheck', 'minLinks')),
     };
 
     const managed = ['v', 'identity', 'ctrl', 'link', 'listeners', 'edge', 'csr', 'forwarder', 'metrics', 'healthChecks'];
@@ -603,8 +610,8 @@ export function routerFromDocument(doc: any): { cfg: RouterConfig; warnings: str
     return {cfg: c, warnings};
 }
 
-export function parseConfigText(text: string): any {
-    const doc = parseYaml(text);
+export function parseConfigText(text: string): YamlMap {
+    const doc: unknown = parseYaml(text);
     if (!isObj(doc)) {
         throw new Error('The file is not a YAML mapping');
     }
