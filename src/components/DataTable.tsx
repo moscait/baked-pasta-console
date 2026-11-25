@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import React, { useCallback, useId, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, Download, Plus, Search, Trash2, Edit2 } from 'lucide-react';
 import { ModalDialog } from './ModalDialog';
 import { csvFileName, downloadText, toCsv } from './csv';
@@ -120,16 +120,8 @@ export function DataTable<T extends { id: string; name?: string }>({
     });
   }, [data, query, searchValue, sortCol, sortDir, columns]);
 
-  // Drop selections for rows that no longer exist (deleted here or elsewhere).
-  useEffect(() => {
-    setSelected((prev) => {
-      if (!prev.size) return prev;
-      const ids = new Set(data.map((r) => r.id));
-      const next = new Set([...prev].filter((id) => ids.has(id)));
-      return next.size === prev.size ? prev : next;
-    });
-  }, [data]);
-
+  // `selected` may still hold ids of rows deleted elsewhere; every read goes through the current
+  // rows (`visibleSelected`, `selected.has(row.id)`), so a stale id is never shown or acted on.
   const visibleSelected = filtered.filter((r) => selected.has(r.id));
   const allVisibleSelected = filtered.length > 0 && visibleSelected.length === filtered.length;
 

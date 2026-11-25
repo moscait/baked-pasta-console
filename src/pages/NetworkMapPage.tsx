@@ -3,6 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AlertTriangle, Crosshair, MapPin, Pause, Play, RefreshCw, Save, Undo2, X } from 'lucide-react';
 import type { EdgeRouter, Identity, TransitRouter } from '../services/api-types';
+import { useServiceLoad } from '../components/state-hooks';
 import { zitiService } from '../services/ziti-service';
 import {
   FabricCircuit,
@@ -83,43 +84,44 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
   const [pending, setPending] = useState<Map<string, GeoPoint | null>>(() => new Map());
   const [saving, setSaving] = useState(false);
 
-  const loadEntities = useCallback(async () => {
-    try {
-      const [ids, ers, trs] = await Promise.all([
+  const loadEntities = useServiceLoad(
+    () =>
+      Promise.all([
         zitiService.list('identities'),
         zitiService.list('edge-routers'),
         zitiService.list('transit-routers').catch(() => [] as TransitRouter[]),
-      ]);
+      ]),
+    ([ids, ers, trs]) => {
       setIdentities(ids);
       setEdgeRouters(ers);
       setTransitRouters(trs);
-    } catch (err) {
-      onToast('error', 'Failed to load the network', zitiService.errorText(err));
-    }
-  }, [onToast]);
+    },
+    (err) => onToast('error', 'Failed to load the network', zitiService.errorText(err)),
+  );
 
-  const loadFabric = useCallback(async () => {
-    try {
-      const [routers, links, circuits] = await Promise.all([
+  // Fabric state (links, circuits) changes without service events: loaded on mount, on demand,
+  // and on the live-refresh timer.
+  const loadFabric = useServiceLoad(
+    () =>
+      Promise.all([
         zitiService.listFabric('routers'),
         zitiService.listFabric('links'),
         zitiService.listFabric('circuits'),
-      ]);
+      ]),
+    ([routers, links, circuits]) => {
       setFabric({ routers, links, circuits });
       setFabricError('');
-    } catch (err) {
+      setLoadedAt(new Date());
+    },
+    (err) => {
       setFabric(null);
       setFabricError(zitiService.errorText(err));
-    }
-    setLoadedAt(new Date());
-  }, []);
+      setLoadedAt(new Date());
+    },
+    { onChange: false },
+  );
 
   const loadAll = useCallback(() => Promise.all([loadEntities(), loadFabric()]), [loadEntities, loadFabric]);
-
-  useEffect(() => {
-    loadAll();
-    return zitiService.subscribe(loadEntities);
-  }, [loadAll, loadEntities]);
 
   useEffect(() => {
     if (!live) return;
@@ -194,7 +196,9 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
   const layersRef = useRef<{ links: L.LayerGroup; circuits: L.LayerGroup; markers: L.LayerGroup } | null>(null);
   const fittedRef = useRef(false);
   const placingRef = useRef<MapNode | null>(null);
-  placingRef.current = placing;
+  useEffect(() => {
+    placingRef.current = placing;
+  }, [placing]);
 
   useEffect(() => {
     if (!mapDiv.current || mapRef.current) return;

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import type {
   AuthPolicy,
@@ -10,6 +10,7 @@ import type {
   ServiceConfigOverride,
 } from '../../services/api-types';
 import { zitiService } from '../../services/ziti-service';
+import { useServiceLoad } from '../../components/state-hooks';
 import { ModalDialog } from '../../components/ModalDialog';
 import {
   CheckField,
@@ -210,25 +211,25 @@ export const ConfigOverridesDialog: React.FC<{
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    try {
-      const [o, s, c] = await Promise.all([
+  // Loads once per mount; the page keys this dialog by identity, so a different identity remounts it.
+  const load = useServiceLoad(
+    () =>
+      Promise.all([
         zitiService.listServiceConfigOverrides(identity.id),
         zitiService.list('services'),
         zitiService.list('configs'),
-      ]);
+      ]),
+    ([o, s, c]) => {
       setOverrides(o);
       setServices(s);
       setConfigs(c);
-    } catch (err) {
+    },
+    (err) => {
       setError(zitiService.errorText(err));
       setOverrides((prev) => prev || []);
-    }
-  }, [identity.id]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+    },
+    { onChange: false },
+  );
 
   const serviceName = (o: ServiceConfigOverride) =>
     o.service?.name || services.find((s) => s.id === o.serviceId)?.name || o.serviceId;

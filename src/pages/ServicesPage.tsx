@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { useResettableState, useServiceLoad } from '../components/state-hooks';
 import type { Config, ConfigType, Service, Terminator } from '../services/api-types';
 import { revertsOf, zitiService } from '../services/ziti-service';
 import { DataTable, ColumnDef } from '../components/DataTable';
@@ -22,7 +23,7 @@ export const ServicesPage: React.FC<{
   initialTab?: 'services' | 'configs' | 'config-types' | 'terminators';
   onToast: (level: 'info' | 'success' | 'warning' | 'error', title: string, detail?: string) => void;
 }> = ({ initialTab = 'services', onToast }) => {
-  const [tab, setTab] = useState<'services' | 'configs' | 'config-types' | 'terminators'>(initialTab);
+  const [tab, setTab] = useResettableState<'services' | 'configs' | 'config-types' | 'terminators'>(initialTab);
   const [services, setServices] = useState<Service[]>([]);
   const [configs, setConfigs] = useState<Config[]>([]);
   const [configTypes, setConfigTypes] = useState<ConfigType[]>([]);
@@ -43,10 +44,6 @@ export const ServicesPage: React.FC<{
   const [cfgJson, setCfgJson] = useState('{}');
   const [cfgError, setCfgError] = useState('');
 
-  useEffect(() => {
-    setTab(initialTab);
-  }, [initialTab]);
-
   const openNewService = () => {
     setTab('services');
     setEditingSvc(null);
@@ -58,29 +55,24 @@ export const ServicesPage: React.FC<{
 
   useCreateIntent({ service: openNewService, wizard: () => setWizardOpen(true) });
 
-  const load = useCallback(async () => {
-    try {
-      const [svcs, cfgs, cts, terms, m] = await Promise.all([
+  const load = useServiceLoad(
+    () =>
+      Promise.all([
         zitiService.list('services'),
         zitiService.list('configs'),
         zitiService.list('config-types'),
         zitiService.list('terminators'),
         zitiService.loadCanvasModel(),
-      ]);
+      ]),
+    ([svcs, cfgs, cts, terms, m]) => {
       setServices(svcs);
       setConfigs(cfgs);
       setConfigTypes(cts);
       setTerminators(terms);
       setCanvasModel(m);
-    } catch (err) {
-      onToast('error', 'Load failed', zitiService.errorText(err));
-    }
-  }, [onToast]);
-
-  useEffect(() => {
-    load();
-    return zitiService.subscribe(load);
-  }, [load]);
+    },
+    (err) => onToast('error', 'Load failed', zitiService.errorText(err)),
+  );
 
   const configMap = new Map(configs.map((c) => [c.id, c]));
   const usedBy = useMemo(() => servicesByConfig(services), [services]);

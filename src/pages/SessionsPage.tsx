@@ -13,6 +13,7 @@ import type { ApiSession, Identity, Service, Session } from '../services/api-typ
 import { zitiService } from '../services/ziti-service';
 import { DataTable, ColumnDef } from '../components/DataTable';
 import { ModalDialog } from '../components/ModalDialog';
+import { useResettableState, useServiceLoad } from '../components/state-hooks';
 import {
   ConcurrencyFilterMode,
   ConcurrencyFinding,
@@ -68,13 +69,21 @@ export const SessionsPage: React.FC<{
   onToast: (level: 'info' | 'success' | 'warning' | 'error', title: string, detail?: string) => void;
 }> = ({ initialTab = 'sessions', onToast }) => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [tab, setTab] = useState<'sessions' | 'api-sessions'>(initialTab);
+  const [tab, setTab] = useResettableState<'sessions' | 'api-sessions'>(initialTab);
   const [identities, setIdentities] = useState<Identity[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [apiSessions, setApiSessions] = useState<ApiSession[]>([]);
   const [policy, setPolicy] = useState<ConcurrencyPolicy>(() => zitiService.getConcurrencyPolicy());
   const [filter, setFilter] = useState<TrafficFilter>(() => filterFromParams(searchParams));
+
+  // Keep the filter synced if the user navigates to `/sessions?q=...` or `?ip=...` while already
+  // mounted (adjusted during render, so the table never shows a frame with the old filter).
+  const [seenParams, setSeenParams] = useState(searchParams);
+  if (seenParams !== searchParams) {
+    setSeenParams(searchParams);
+    if (searchParams.size > 0) setFilter((prev) => ({ ...prev, ...filterFromParams(searchParams) }));
+  }
 
   // Policy modal state
   const [policyOpen, setPolicyOpen] = useState(false);
@@ -93,45 +102,24 @@ export const SessionsPage: React.FC<{
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmError, setConfirmError] = useState('');
 
-  useEffect(() => {
-    setTab(initialTab);
-  }, [initialTab]);
-
-  // Keep filter synced if the user navigates to `/sessions?q=...` or `?ip=...` while already mounted.
-  useEffect(() => {
-    if (searchParams.size === 0) return;
-    setFilter((prev) => ({
-      ...prev,
-      ...filterFromParams(searchParams),
-    }));
-  }, [searchParams]);
-
-  const load = useCallback(async () => {
-    try {
-      const [ids, svcs, sess, apiSess] = await Promise.all([
+  const load = useServiceLoad(
+    () =>
+      Promise.all([
         zitiService.list('identities'),
         zitiService.list('services'),
         zitiService.list('sessions'),
         zitiService.list('api-sessions'),
-      ]);
+      ]),
+    ([ids, svcs, sess, apiSess]) => {
       setIdentities(ids);
       setServices(svcs);
       setSessions(sess);
       setApiSessions(apiSess);
-    } catch (err) {
-      onToast('error', 'Load failed', zitiService.errorText(err));
-    }
-  }, [onToast]);
+    },
+    (err) => onToast('error', 'Load failed', zitiService.errorText(err)),
+  );
 
-  useEffect(() => {
-    load();
-    const unsubData = zitiService.subscribe(load);
-    const unsubPolicy = zitiService.subscribePolicy(() => setPolicy(zitiService.getConcurrencyPolicy()));
-    return () => {
-      unsubData();
-      unsubPolicy();
-    };
-  }, [load]);
+  useEffect(() => zitiService.subscribePolicy(() => setPolicy(zitiService.getConcurrencyPolicy())), []);
 
   const closeConfirm = useCallback(() => {
     setPendingConfirm(null);
