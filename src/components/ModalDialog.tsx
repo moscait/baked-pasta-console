@@ -9,9 +9,6 @@ interface ModalDialogProps {
   children: React.ReactNode;
 }
 
-// `closedby` is a newer <dialog> attribute that React's DOM types do not know yet.
-const CLOSED_BY_ANY = { closedby: 'any' } as React.HTMLAttributes<HTMLDialogElement>;
-
 export const ModalDialog: React.FC<ModalDialogProps> = ({ open, onClose, title, wide, children }) => {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -37,7 +34,9 @@ export const ModalDialog: React.FC<ModalDialogProps> = ({ open, onClose, title, 
     return () => dialog.removeEventListener('close', handleClose);
   }, [onClose]);
 
-  // Fallback for browsers without native closedby="any" support
+  // Close on a press that both starts and ends on the backdrop. Native `closedby="any"` is not
+  // used: it also closes on the release of a gesture that began before the dialog opened, so a
+  // dialog opened at the end of a drag (e.g. connecting nodes on the canvas) closed at once.
   const pressedOutsideRef = useRef(false);
   const isOutside = (e: React.PointerEvent<HTMLDialogElement>) => {
     const d = dialogRef.current;
@@ -52,16 +51,14 @@ export const ModalDialog: React.FC<ModalDialogProps> = ({ open, onClose, title, 
     <dialog
       ref={dialogRef}
       aria-labelledby={titleId}
-      {...CLOSED_BY_ANY}
       onPointerDown={(e) => {
-        if (!('closedBy' in HTMLDialogElement.prototype)) {
-          pressedOutsideRef.current = isOutside(e);
-        }
+        pressedOutsideRef.current = isOutside(e);
       }}
       onPointerUp={(e) => {
-        if (!('closedBy' in HTMLDialogElement.prototype) && pressedOutsideRef.current && isOutside(e)) {
+        if (pressedOutsideRef.current && isOutside(e)) {
           dialogRef.current?.close();
         }
+        pressedOutsideRef.current = false;
       }}
       className={`m-auto rounded-2xl border border-[var(--ac-line)] bg-[var(--ac-surface)] text-[var(--ac-ink)] shadow-2xl p-0 ${
         wide ? 'w-[min(1040px,calc(100vw-2rem))]' : 'w-[min(640px,calc(100vw-2rem))]'
