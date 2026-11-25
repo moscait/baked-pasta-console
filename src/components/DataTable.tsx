@@ -1,6 +1,7 @@
-import React, { useCallback, useId, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Plus, Search, Trash2, Edit2 } from 'lucide-react';
+import React, { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { ArrowDown, ArrowUp, Download, Plus, Search, Trash2, Edit2 } from 'lucide-react';
 import { ModalDialog } from './ModalDialog';
+import { csvFileName, downloadText, toCsv } from './csv';
 
 export interface ColumnDef<T> {
   key: string;
@@ -26,6 +27,15 @@ interface DataTableProps<T extends { id: string; name?: string }> {
   onDelete?: (row: T) => void | Promise<void>;
   extraActions?: (row: T) => React.ReactNode;
   headerTabs?: React.ReactNode;
+  /** Shows row checkboxes and "Delete selected" (runs `onDelete` per row). Defaults to on when `onDelete` is set. */
+  bulkDelete?: boolean;
+  /** Hides the "Export CSV" button (e.g. for tables whose rows hold secrets). */
+  noExport?: boolean;
+}
+
+interface BulkResult {
+  deleted: number;
+  failures: { name: string; error: string }[];
 }
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -46,6 +56,8 @@ export function DataTable<T extends { id: string; name?: string }>({
   onDelete,
   extraActions,
   headerTabs,
+  bulkDelete,
+  noExport,
 }: DataTableProps<T>) {
   const captionId = useId();
   const [internalQuery, setInternalQuery] = useState('');
@@ -57,6 +69,11 @@ export function DataTable<T extends { id: string; name?: string }>({
     },
     [onSearchChange],
   );
+  const canBulk = !!onDelete && bulkDelete !== false;
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkResult, setBulkResult] = useState<BulkResult | null>(null);
   const [sortCol, setSortCol] = useState<string>(columns[0]?.key || 'name');
   const [sortDir, setSortDir] = useState<'ascending' | 'descending'>('ascending');
   const [confirmRow, setConfirmRow] = useState<T | null>(null);
@@ -103,6 +120,72 @@ export function DataTable<T extends { id: string; name?: string }>({
     });
   }, [data, query, searchValue, sortCol, sortDir, columns]);
 
+  // Drop selections for rows that no longer exist (deleted here or elsewhere).
+  useEffect(() => {
+    setSelected((prev) => {
+      if (!prev.size) return prev;
+      const ids = new Set(data.map((r) => r.id));
+      const next = new Set([...prev].filter((id) => ids.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [data]);
+
+  const visibleSelected = filtered.filter((r) => selected.has(r.id));
+  const allVisibleSelected = filtered.length > 0 && visibleSelected.length === filtered.length;
+
+  const toggleRow = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleAllVisible = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) filtered.forEach((r) => next.delete(r.id));
+      else filtered.forEach((r) => next.add(r.id));
+      return next;
+    });
+
+  const closeBulk = useCallback(() => {
+    setBulkOpen(false);
+    setBulkResult(null);
+  }, []);
+
+  /** Deletes the selected rows one at a time so each failure is reported against its row. */
+  const runBulkDelete = async () => {
+    if (!onDelete) return;
+    const rows = visibleSelected;
+    setBulkRunning(true);
+    const failures: BulkResult['failures'] = [];
+    let deleted = 0;
+    for (const row of rows) {
+      try {
+        await onDelete(row);
+        deleted++;
+      } catch (err) {
+        failures.push({ name: row.name || row.id, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    setBulkRunning(false);
+    setSelected(new Set());
+    if (failures.length) {
+      // Reopen if the dialog was dismissed (Escape) while the deletes were still running.
+      setBulkResult({ deleted, failures });
+      setBulkOpen(true);
+    } else {
+      closeBulk();
+    }
+  };
+
+  const exportCsv = () => {
+    const headers = columns.map((c) => c.header);
+    const rows = filtered.map((row) => columns.map((c) => (c.getValue ? c.getValue(row) : cellValue(row, c.key))));
+    downloadText(csvFileName(caption), toCsv(headers, rows));
+  };
+
   const handleSort = (key: string) => {
     if (sortCol === key) {
       setSortDir((prev) => (prev === 'ascending' ? 'descending' : 'ascending'));
@@ -138,16 +221,40 @@ export function DataTable<T extends { id: string; name?: string }>({
           )}
         </div>
 
-        {onCreate && (
-          <button
-            type="button"
-            onClick={onCreate}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[var(--ac-dial)] text-white text-xs font-semibold shadow-sm hover:opacity-95 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>{createLabel}</span>
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {canBulk && visibleSelected.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setBulkOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[var(--ac-bad)] bg-[var(--ac-bad-soft)] text-[var(--ac-bad)] text-xs font-semibold cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete selected ({visibleSelected.length})</span>
+            </button>
+          )}
+          {!noExport && (
+            <button
+              type="button"
+              onClick={exportCsv}
+              disabled={!filtered.length}
+              title={`Download the ${filtered.length} shown row${filtered.length === 1 ? '' : 's'} as CSV`}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[var(--ac-line)] bg-[var(--ac-surface)] text-xs font-medium hover:border-[var(--ac-muted)] cursor-pointer disabled:opacity-50 disabled:cursor-default"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export CSV</span>
+            </button>
+          )}
+          {onCreate && (
+            <button
+              type="button"
+              onClick={onCreate}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[var(--ac-dial)] text-white text-xs font-semibold shadow-sm hover:opacity-95 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>{createLabel}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       <div role="status" className="sr-only-status">
@@ -166,6 +273,21 @@ export function DataTable<T extends { id: string; name?: string }>({
           </caption>
           <thead>
             <tr>
+              {canBulk && (
+                <th scope="col" className="w-8">
+                  <input
+                    type="checkbox"
+                    aria-label={allVisibleSelected ? 'Deselect all shown rows' : 'Select all shown rows'}
+                    checked={allVisibleSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = visibleSelected.length > 0 && !allVisibleSelected;
+                    }}
+                    onChange={toggleAllVisible}
+                    disabled={!filtered.length}
+                    className="cursor-pointer"
+                  />
+                </th>
+              )}
               {columns.map((c) => {
                 const isSorted = sortCol === c.key;
                 const sortable = c.sortable !== false;
@@ -200,7 +322,18 @@ export function DataTable<T extends { id: string; name?: string }>({
           <tbody>
             {filtered.length > 0 ? (
               filtered.map((row) => (
-                <tr key={row.id}>
+                <tr key={row.id} className={selected.has(row.id) ? 'bg-[var(--ac-dial-soft)]' : undefined}>
+                  {canBulk && (
+                    <td className="w-8">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${row.name || row.id}`}
+                        checked={selected.has(row.id)}
+                        onChange={() => toggleRow(row.id)}
+                        className="cursor-pointer"
+                      />
+                    </td>
+                  )}
                   {columns.map((c) => (
                     <td key={c.key}>{c.render ? c.render(row) : (cellValue(row, c.key) as React.ReactNode)}</td>
                   ))}
@@ -237,7 +370,7 @@ export function DataTable<T extends { id: string; name?: string }>({
             ) : (
               <tr>
                 <td
-                  colSpan={columns.length + (onEdit || onDelete || extraActions ? 1 : 0)}
+                  colSpan={columns.length + (onEdit || onDelete || extraActions ? 1 : 0) + (canBulk ? 1 : 0)}
                   className="text-center py-8 text-[var(--ac-muted)] text-xs"
                 >
                   No records match your filter.
@@ -280,6 +413,69 @@ export function DataTable<T extends { id: string; name?: string }>({
             </button>
           </div>
         </div>
+      </ModalDialog>
+
+      <ModalDialog
+        open={bulkOpen}
+        onClose={closeBulk}
+        title={bulkResult ? 'Some items were not deleted' : `Delete ${visibleSelected.length} items?`}
+      >
+        {bulkResult ? (
+          <div className="space-y-4 text-xs">
+            <p className="m-0">
+              Deleted {bulkResult.deleted}. These {bulkResult.failures.length} failed and are still on the controller:
+            </p>
+            <ul role="alert" className="m-0 p-3 rounded-lg border border-[var(--ac-bad)] bg-[var(--ac-bad-soft)] space-y-1 list-none max-h-60 overflow-auto">
+              {bulkResult.failures.map((f) => (
+                <li key={f.name}>
+                  <strong className="font-mono">{f.name}</strong>: {f.error}
+                </li>
+              ))}
+            </ul>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={closeBulk}
+                autoFocus
+                className="px-3.5 py-2 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)] font-medium cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4 text-xs">
+            <p className="m-0">
+              Permanently delete these from {caption.toLowerCase()}? This takes effect on the controller immediately and
+              cannot be undone.
+            </p>
+            <ul className="m-0 p-3 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)] font-mono max-h-48 overflow-auto list-none space-y-0.5">
+              {visibleSelected.map((r) => (
+                <li key={r.id}>{r.name || r.id}</li>
+              ))}
+            </ul>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeBulk}
+                disabled={bulkRunning}
+                className="px-3.5 py-2 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)] font-medium cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={runBulkDelete}
+                disabled={bulkRunning || !visibleSelected.length}
+                autoFocus
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[var(--ac-bad)] text-white font-semibold cursor-pointer disabled:opacity-60"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{bulkRunning ? 'Deleting…' : `Delete ${visibleSelected.length}`}</span>
+              </button>
+            </div>
+          </div>
+        )}
       </ModalDialog>
     </div>
   );

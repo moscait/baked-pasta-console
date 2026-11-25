@@ -63,6 +63,7 @@ export interface Identity extends NamedEntity {
   };
   enrollment?: { ott?: EnrollmentToken; updb?: EnrollmentToken; ca?: EnrollmentToken; ottca?: EnrollmentToken };
   hasEdgeRouterConnection?: boolean;
+  isMfaEnabled?: boolean;
   sdkInfo?: { type?: string; appId?: string; version?: string };
 }
 

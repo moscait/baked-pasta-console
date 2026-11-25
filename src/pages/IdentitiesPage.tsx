@@ -5,8 +5,27 @@ import type { ApiSession, Identity } from '../services/api-types';
 import { zitiService } from '../services/ziti-service';
 import { DataTable, ColumnDef } from '../components/DataTable';
 import { ModalDialog } from '../components/ModalDialog';
-import { AlertTriangle, Check, Copy, Download, QrCode, Shield, Terminal, UserCheck } from 'lucide-react';
+import { useCreateIntent } from '../components/useCreateIntent';
+import {
+  AlertTriangle,
+  Check,
+  Copy,
+  Download,
+  KeyRound,
+  QrCode,
+  RotateCcw,
+  Shield,
+  ShieldOff,
+  Terminal,
+  UserCheck,
+} from 'lucide-react';
 import { ConcurrencyPolicy, evaluateSessionMonitor } from '../features/sessions/session-monitor.logic';
+
+/** `yyyy-MM-ddTHH:mm` in local time, the value format of `<input type="datetime-local">`. */
+const toLocalInput = (d: Date) => {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
 
 export const IdentitiesPage: React.FC<{
   onToast: (level: 'info' | 'success' | 'warning' | 'error', title: string, detail?: string) => void;
@@ -24,6 +43,12 @@ export const IdentitiesPage: React.FC<{
   const [tokenModal, setTokenModal] = useState<Identity | null>(null);
   const [copied, setCopied] = useState(false);
 
+  const [credTarget, setCredTarget] = useState<Identity | null>(null);
+  const [credExpiry, setCredExpiry] = useState('');
+  const [credBusy, setCredBusy] = useState(false);
+  const [credError, setCredError] = useState('');
+  const [confirmReset, setConfirmReset] = useState(false);
+
   const load = useCallback(async () => {
     try {
       const [list, apiSess] = await Promise.all([
@@ -32,8 +57,10 @@ export const IdentitiesPage: React.FC<{
       ]);
       setRows(list);
       setApiSessions(apiSess);
+      return list;
     } catch (err) {
       onToast('error', 'Failed to load identities', zitiService.errorText(err));
+      return null;
     }
   }, [onToast]);
 
@@ -48,6 +75,48 @@ export const IdentitiesPage: React.FC<{
       }),
     [rows, apiSessions, policy],
   );
+
+  const openCredentials = (row: Identity) => {
+    setCredTarget(row);
+    setCredExpiry(toLocalInput(new Date(Date.now() + 2 * 86400000)));
+    setCredError('');
+    setConfirmReset(false);
+  };
+
+  /** Runs a credential action, then shows the identity's new enrollment token when it has one. */
+  const runCredentialAction = async (kind: 'reset' | 'reissue' | 'mfa') => {
+    if (!credTarget) return;
+    const expiresAt = new Date(credExpiry);
+    if (kind !== 'mfa' && (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now() + 60000)) {
+      setCredError('Pick an expiry at least a minute in the future.');
+      return;
+    }
+    setCredBusy(true);
+    setCredError('');
+    try {
+      if (kind === 'reset') await zitiService.resetEnrollment(credTarget, expiresAt);
+      else if (kind === 'reissue') await zitiService.reissueEnrollment(credTarget, expiresAt);
+      else await zitiService.resetMfa(credTarget);
+      const target = credTarget;
+      setCredTarget(null);
+      if (kind === 'mfa') {
+        onToast('success', 'MFA reset', `${target.name} must set up MFA again at next sign-in.`);
+        await load();
+        return;
+      }
+      onToast(
+        'success',
+        kind === 'reset' ? 'Enrollment reset' : 'Enrollment token reissued',
+        `${target.name}: new token expires ${expiresAt.toLocaleString()}.`,
+      );
+      const fresh = (await load())?.find((i) => i.id === target.id);
+      if (fresh && getJwt(fresh)) setTokenModal(fresh);
+    } catch (err) {
+      setCredError(zitiService.errorText(err));
+    } finally {
+      setCredBusy(false);
+    }
+  };
 
   useEffect(() => {
     load();
@@ -66,6 +135,8 @@ export const IdentitiesPage: React.FC<{
     setIsAdmin(false);
     setModalOpen(true);
   };
+
+  useCreateIntent({ identity: openCreate });
 
   const openEdit = (row: Identity) => {
     setEditing(row);
@@ -106,14 +177,11 @@ export const IdentitiesPage: React.FC<{
     }
   };
 
+  // Errors propagate so the table's confirm dialog (and bulk delete) can report them per row.
   const handleDelete = async (row: Identity) => {
-    try {
-      await zitiService.remove('identities', row.id);
-      onToast('info', 'Identity deleted', row.name);
-      await load();
-    } catch (err) {
-      onToast('error', 'Delete failed', zitiService.errorText(err));
-    }
+    await zitiService.remove('identities', row.id);
+    onToast('info', 'Identity deleted', row.name);
+    await load();
   };
 
   const getJwt = (row: Identity): string | null =>
@@ -276,19 +344,142 @@ export const IdentitiesPage: React.FC<{
         onCreate={openCreate}
         onEdit={openEdit}
         onDelete={handleDelete}
-        extraActions={(row) =>
-          getJwt(row) ? (
-            <button
-              type="button"
-              onClick={() => setTokenModal(row)}
-              title="Enrollment JWT & QR Code"
-              className="p-1.5 rounded-lg border border-[var(--ac-dial)]/40 bg-[var(--ac-dial-soft)] text-[var(--ac-dial)] cursor-pointer"
-            >
-              <QrCode className="w-3.5 h-3.5" />
-            </button>
-          ) : null
-        }
+        extraActions={(row) => (
+          <>
+            {getJwt(row) && (
+              <button
+                type="button"
+                onClick={() => setTokenModal(row)}
+                title="Enrollment JWT & QR Code"
+                className="p-1.5 rounded-lg border border-[var(--ac-dial)]/40 bg-[var(--ac-dial-soft)] text-[var(--ac-dial)] cursor-pointer"
+              >
+                <QrCode className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {!row.isDefaultAdmin && (
+              <button
+                type="button"
+                onClick={() => openCredentials(row)}
+                title="Credentials: reset enrollment, reissue token, reset MFA"
+                aria-label={`Credentials for ${row.name}`}
+                className="p-1.5 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)] text-[var(--ac-muted)] hover:text-[var(--ac-ink)] cursor-pointer"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </>
+        )}
       />
+
+      {/* Credentials: reset enrollment / reissue token / reset MFA */}
+      {credTarget && (
+        <ModalDialog open={!!credTarget} onClose={() => setCredTarget(null)} title={`Credentials: ${credTarget.name}`}>
+          <div className="space-y-4 text-xs">
+            {(() => {
+              const hasAuth = !!(credTarget.authenticators?.cert?.id || credTarget.authenticators?.updb?.id);
+              const pending = !!getJwt(credTarget) || !!credTarget.enrollment?.ottca?.id;
+              return (
+                <>
+                  {(hasAuth || pending) && (
+                    <label className="block space-y-1">
+                      <span className="font-semibold">New token expires</span>
+                      <input
+                        type="datetime-local"
+                        value={credExpiry}
+                        min={toLocalInput(new Date(Date.now() + 60000))}
+                        onChange={(e) => setCredExpiry(e.target.value)}
+                        className="w-full px-3 py-1.5 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)] font-mono"
+                      />
+                    </label>
+                  )}
+
+                  {pending && (
+                    <section className="p-3 rounded-xl border border-[var(--ac-line)] bg-[var(--ac-surface-2)] space-y-2">
+                      <div className="font-semibold">Reissue enrollment token</div>
+                      <p className="m-0 text-[var(--ac-muted)]">
+                        Replaces the pending one-time token. The current JWT and QR code stop working.
+                      </p>
+                      <button
+                        type="button"
+                        disabled={credBusy}
+                        onClick={() => runCredentialAction('reissue')}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--ac-dial)] text-white font-semibold cursor-pointer disabled:opacity-60"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Reissue token</span>
+                      </button>
+                    </section>
+                  )}
+
+                  {hasAuth && (
+                    <section className="p-3 rounded-xl border border-[var(--ac-bad)]/40 bg-[var(--ac-bad-soft)] space-y-2">
+                      <div className="font-semibold text-[var(--ac-bad)]">Reset enrollment</div>
+                      <p className="m-0">
+                        Revokes the {credTarget.authenticators?.cert ? 'certificate' : 'password'} this identity uses now and
+                        issues a new one-time token. The device disconnects and cannot reconnect until it enrolls again.
+                      </p>
+                      {confirmReset ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={credBusy}
+                            onClick={() => runCredentialAction('reset')}
+                            autoFocus
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--ac-bad)] text-white font-semibold cursor-pointer disabled:opacity-60"
+                          >
+                            {credBusy ? 'Resetting…' : `Yes, reset ${credTarget.name}`}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={credBusy}
+                            onClick={() => setConfirmReset(false)}
+                            className="px-3 py-1.5 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface)] cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmReset(true)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--ac-bad)] text-[var(--ac-bad)] bg-[var(--ac-surface)] font-semibold cursor-pointer"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>Reset enrollment…</span>
+                        </button>
+                      )}
+                    </section>
+                  )}
+
+                  <section className="p-3 rounded-xl border border-[var(--ac-line)] bg-[var(--ac-surface-2)] space-y-2">
+                    <div className="font-semibold">Reset MFA</div>
+                    <p className="m-0 text-[var(--ac-muted)]">
+                      {credTarget.isMfaEnabled === false
+                        ? 'MFA is not set up for this identity.'
+                        : 'Removes the identity’s TOTP enrollment so the user can set up MFA again (e.g. after losing a phone).'}
+                    </p>
+                    <button
+                      type="button"
+                      disabled={credBusy || credTarget.isMfaEnabled === false}
+                      onClick={() => runCredentialAction('mfa')}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface)] font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                    >
+                      <ShieldOff className="w-3.5 h-3.5" />
+                      <span>Reset MFA</span>
+                    </button>
+                  </section>
+
+                  {credError && (
+                    <p role="alert" className="m-0 p-3 rounded-lg border border-[var(--ac-bad)] bg-[var(--ac-bad-soft)]">
+                      {credError}
+                    </p>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+        </ModalDialog>
+      )}
 
       {/* Create / Edit Identity Modal */}
       <ModalDialog
