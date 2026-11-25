@@ -1,8 +1,10 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles } from 'lucide-react';
+import type { ApiSession } from '../../services/api-types';
 import { AcEndpoint, AcKind, buildOptions, clone } from './access-canvas.logic';
 import { BoardFilters, Clip, buildBoard, groupKey, marksFor, remapLayout } from './canvas-board.logic';
+import { ConcurrencyPolicy, evaluateSessionMonitor } from '../sessions/session-monitor.logic';
 import { CanvasBoard, CanvasBoardHandle } from './CanvasBoard';
 import { AccessWizard } from './AccessWizard';
 import type { WizardPlan } from './access-wizard.logic';
@@ -50,6 +52,18 @@ export const AccessCanvasPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) =>
   const [grant, setGrant] = useState<GrantState | null>(null);
 
   const { loading, loadError, committed, reload } = useCanvasModel();
+  const [apiSessions, setApiSessions] = useState<ApiSession[]>([]);
+  const [concPolicy, setConcPolicy] = useState<ConcurrencyPolicy>(() => zitiService.getConcurrencyPolicy());
+
+  const loadLiveSessions = useCallback(async () => {
+    const rows = await zitiService.list('api-sessions').catch(() => []);
+    setApiSessions(rows);
+  }, []);
+
+  useEffect(() => {
+    loadLiveSessions();
+    return zitiService.subscribePolicy(() => setConcPolicy(zitiService.getConcurrencyPolicy()));
+  }, [loadLiveSessions]);
 
   const changes = useChangeSets({
     committed,
@@ -58,7 +72,46 @@ export const AccessCanvasPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) =>
     newChangeId,
     onFollowUps: () => setDrawer('pending'),
   });
-  const { draft, pending } = changes;
+  const { draft: rawDraft, pending } = changes;
+
+  // Overlay live session IPs & concurrency badges in memory without coupling them to staged edits or problem counts.
+  const draft = useMemo(() => {
+    if (!rawDraft) return null;
+    if (!apiSessions.length) return rawDraft;
+    const monitor = evaluateSessionMonitor({
+      identities: rawDraft.identities.map((i) => ({
+        id: i.id,
+        name: i.name,
+        isAdmin: i.isAdmin,
+        externalId: i.externalId,
+        roleAttributes: i.attrs,
+      })),
+      apiSessions,
+      sessions: [],
+      policy: concPolicy,
+      currentSessionToken: zitiService.currentSessionToken(),
+    });
+    return {
+      ...rawDraft,
+      identities: rawDraft.identities.map((i) => {
+        const s = monitor.byIdentity.get(i.id);
+        if (!s) return i;
+        return {
+          ...i,
+          sessionIps: s.distinctLiveIps,
+          liveSessionCount: s.liveSessionCount,
+          concurrency: s.finding
+            ? {
+                severity: s.finding.severity,
+                concurrentSessionCount: s.finding.concurrentSessionCount,
+                distinctIps: s.finding.distinctIps,
+                summary: s.finding.summary,
+              }
+            : undefined,
+        };
+      }),
+    };
+  }, [rawDraft, apiSessions, concPolicy]);
 
   const layout = useCanvasLayout({ draft, committed, expanded, boardRef, onToast });
   const { layoutDraft, saveLayout } = layout;
@@ -123,7 +176,10 @@ export const AccessCanvasPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) =>
     !filters.types.router ||
     filters.attrs.length > 0 ||
     !!filters.search.trim() ||
-    filters.problemsOnly;
+    filters.problemsOnly ||
+    !!filters.ipFilter?.trim() ||
+    !!filters.activeSessionsOnly ||
+    !!filters.concurrentOnly;
   const clearFilters = () => setFilters(showEverything());
 
   const searchMatches = useMemo(
@@ -200,7 +256,7 @@ export const AccessCanvasPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) =>
             onExport={layout.exportLayout}
             onImport={layout.importLayout}
             onRefresh={async () => {
-              await reload();
+              await Promise.all([reload(), loadLiveSessions()]);
               requestAnimationFrame(() => boardRef.current?.fit());
             }}
             busy={changes.busy}

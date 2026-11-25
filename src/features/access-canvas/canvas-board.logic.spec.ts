@@ -18,6 +18,7 @@ import {
   sameLayout,
   uniqueName,
 } from './canvas-board.logic';
+import { findOp, intentOf } from './test-helpers';
 
 const allTypes = (): BoardFilters => ({
   types: { identity: true, service: true, router: true },
@@ -106,7 +107,7 @@ describe('canvas-board.logic', () => {
         identityRoles: ['#ssh-servers'],
         serviceRoles: ['#web'],
         posture: [],
-      } as any);
+      });
       const b = build(m);
       const hosts = b.nodes.find((n) => n.key === groupKey('identity', 'ssh-servers'))!;
       const svc = b.nodes.find((n) => n.key === groupKey('service', 'web'))!;
@@ -172,18 +173,18 @@ describe('canvas-board.logic', () => {
     it('moves a card between groups', () => {
       const r = moveMember(model(), { kind: 'identity', id: 'i1', name: 'alice' }, 'sales', 'ops', false);
       expect('ops' in r).toBe(true);
-      const m = applyOps(model(), (r as any).ops);
+      const m = applyOps(model(), intentOf(r).ops);
       expect(m.identities.find((i) => i.id === 'i1')!.attrs).toEqual(['ops']);
     });
 
     it('copies with Alt and keeps the old group', () => {
-      const r = moveMember(model(), { kind: 'identity', id: 'i1', name: 'alice' }, 'sales', 'ops', true) as any;
+      const r = intentOf(moveMember(model(), { kind: 'identity', id: 'i1', name: 'alice' }, 'sales', 'ops', true));
       const m = applyOps(model(), r.ops);
       expect(m.identities.find((i) => i.id === 'i1')!.attrs.sort()).toEqual(['ops', 'sales']);
     });
 
     it('dropping on empty canvas removes it from the group', () => {
-      const r = moveMember(model(), { kind: 'identity', id: 'i2', name: 'bob' }, 'ops', null, false) as any;
+      const r = intentOf(moveMember(model(), { kind: 'identity', id: 'i2', name: 'bob' }, 'ops', null, false));
       expect(r.ops).toEqual([{ op: 'removeAttr', kind: 'identity', id: 'i2', attr: 'ops' }]);
     });
 
@@ -193,7 +194,7 @@ describe('canvas-board.logic', () => {
     });
 
     it('delete takes cards out of groups only', () => {
-      const r = removeFromGroups(model(), [{ kind: 'identity', id: 'i1', name: 'alice', attr: 'sales' }]) as any;
+      const r = intentOf(removeFromGroups(model(), [{ kind: 'identity', id: 'i1', name: 'alice', attr: 'sales' }]));
       expect(r.ops).toEqual([{ op: 'removeAttr', kind: 'identity', id: 'i1', attr: 'sales' }]);
       expect('error' in removeFromGroups(model(), [{ kind: 'identity', id: 'i1', name: 'alice', attr: 'nope' }])).toBe(
         true,
@@ -205,7 +206,7 @@ describe('canvas-board.logic', () => {
     const copyAlice: Clip = { mode: 'copy', items: [{ kind: 'identity', id: 'i1', name: 'alice', attrs: ['sales'] }] };
 
     it('paste into a group adds the attribute', () => {
-      const r = pasteIntoGroup(model(), copyAlice, 'identity', 'ops') as any;
+      const r = intentOf(pasteIntoGroup(model(), copyAlice, 'identity', 'ops'));
       expect(r.ops).toEqual([{ op: 'addAttr', kind: 'identity', id: 'i1', attr: 'ops' }]);
     });
 
@@ -214,7 +215,7 @@ describe('canvas-board.logic', () => {
         mode: 'cut',
         items: [{ kind: 'identity', id: 'i2', name: 'bob', attrs: ['sales', 'ops'], fromAttr: 'ops' }],
       };
-      const r = pasteIntoGroup(model(), clip, 'identity', 'web-hosts') as any;
+      const r = intentOf(pasteIntoGroup(model(), clip, 'identity', 'web-hosts'));
       const m = applyOps(model(), r.ops);
       expect(m.identities.find((i) => i.id === 'i2')!.attrs.sort()).toEqual(['sales', 'web-hosts']);
     });
@@ -224,7 +225,7 @@ describe('canvas-board.logic', () => {
     });
 
     it('paste onto an entity copies access (attributes)', () => {
-      const r = pasteOntoEntities(model(), copyAlice, [{ kind: 'identity', id: 'i4' }]) as any;
+      const r = intentOf(pasteOntoEntities(model(), copyAlice, [{ kind: 'identity', id: 'i4' }]));
       expect(r.ops).toEqual([{ op: 'addAttr', kind: 'identity', id: 'i4', attr: 'sales' }]);
     });
 
@@ -238,12 +239,11 @@ describe('canvas-board.logic', () => {
           { kind: 'service', id: 's1', name: 'crm', attrs: ['web'] },
         ],
       };
-      const r = pasteAsNew(m, clip, () => `new-${++n}`) as any;
-      expect(r.created.length).toBe(2);
-      const ci = r.ops.find((o: any) => o.op === 'createIdentity');
-      expect(ci.identity).toEqual({ id: 'new-1', name: 'alice-copy', attrs: ['sales'] });
-      const cs = r.ops.find((o: any) => o.op === 'createService');
-      expect(cs.service.configs).toEqual(['c1']);
+      const r = pasteAsNew(m, clip, () => `new-${++n}`);
+      if ('error' in r) throw new Error(r.error);
+      expect(r.created?.length).toBe(2);
+      expect(findOp(r.ops, 'createIdentity').identity).toEqual({ id: 'new-1', name: 'alice-copy', attrs: ['sales'] });
+      expect(findOp(r.ops, 'createService').service.configs).toEqual(['c1']);
       const after = applyOps(m, r.ops);
       expect(after.identities.some((i) => i.name === 'alice-copy')).toBe(true);
     });
@@ -280,6 +280,46 @@ describe('canvas-board.logic', () => {
     it('marks pending changes for the board', () => {
       const k = marksFor([[{ op: 'addAttr', kind: 'identity', id: 'i1', attr: 'ops' }]]);
       expect(k.attrs.has('identity:i1:ops')).toBe(true);
+    });
+  });
+
+  describe('traffic and client-IP filtering', () => {
+    it('isolates identities matching a CIDR or concurrency filter along with their reachable policy paths', () => {
+      const m = model();
+      m.identities[0].sessionIps = ['10.20.1.5'];
+      m.identities[0].liveSessionCount = 1;
+      m.identities[1].sessionIps = ['10.20.1.5', '203.0.113.88'];
+      m.identities[1].liveSessionCount = 2;
+      m.identities[1].concurrency = {
+        severity: 'critical',
+        concurrentSessionCount: 2,
+        distinctIps: ['10.20.1.5', '203.0.113.88'],
+        summary: '2 active sessions across 2 IPs',
+      };
+
+      const byExternalIp = build(m, { ...allTypes(), ipFilter: '!10.0.0.0/8' });
+      const keys = byExternalIp.nodes.map((n) => n.key);
+      // bob is in #sales and #ops; #sales connects through p1 to #web; loner (i4) has no IP and is hidden.
+      expect(keys).toContain(groupKey('identity', 'sales'));
+      expect(keys).toContain(groupKey('identity', 'ops'));
+      expect(keys).toContain(hubKey('dial', 'p1'));
+      expect(keys).toContain(groupKey('service', 'web'));
+      expect(keys).not.toContain(freeKey('identity', 'i4'));
+
+      const sales = byExternalIp.nodes.find((n) => n.key === groupKey('identity', 'sales'))!;
+      expect(sales.members.find((mb) => mb.id === 'i2')?.hit).toBe(true);
+      expect(sales.members.find((mb) => mb.id === 'i2')?.concurrentSeverity).toBe('critical');
+      // Live session concurrency is a badge/filter, not a configuration problem.
+      expect(sales.members.find((mb) => mb.id === 'i2')?.problems).toEqual([]);
+      expect(sales.members.find((mb) => mb.id === 'i1')?.hit).toBe(false);
+
+      const concurrentOnly = build(m, { ...allTypes(), concurrentOnly: true });
+      expect(concurrentOnly.nodes.map((n) => n.key)).toContain(groupKey('identity', 'ops'));
+      expect(concurrentOnly.nodes.map((n) => n.key)).not.toContain(freeKey('identity', 'i4'));
+
+      // Incomplete CIDR mid-entry acts as a no-op instead of blanking the canvas.
+      const midEntry = build(m, { ...allTypes(), ipFilter: '10.0.0.0/' });
+      expect(midEntry.nodes.map((n) => n.key)).toContain(freeKey('identity', 'i4'));
     });
   });
 });

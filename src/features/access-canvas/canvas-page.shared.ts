@@ -52,4 +52,7 @@ export const showEverything = (): BoardFilters => ({
   attrs: [],
   search: '',
   problemsOnly: false,
+  ipFilter: '',
+  activeSessionsOnly: false,
+  concurrentOnly: false,
 });

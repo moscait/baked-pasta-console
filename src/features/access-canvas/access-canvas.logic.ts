@@ -9,6 +9,13 @@
 export type Semantic = 'AnyOf' | 'AllOf';
 export type AcKind = 'identity' | 'service' | 'router';
 
+export interface AcIdentityConcurrency {
+  severity: 'warning' | 'critical';
+  concurrentSessionCount: number;
+  distinctIps: string[];
+  summary: string;
+}
+
 export interface AcIdentity {
   id: string;
   name: string;
@@ -16,6 +23,11 @@ export interface AcIdentity {
   enrolled: boolean;
   online: boolean;
   isAdmin: boolean;
+  externalId?: string | null;
+  sessionIps?: string[];
+  liveSessionCount?: number;
+  activeServiceIds?: string[];
+  concurrency?: AcIdentityConcurrency;
 }
 export interface AcService {
   id: string;

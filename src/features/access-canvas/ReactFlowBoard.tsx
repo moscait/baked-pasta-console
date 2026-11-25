@@ -36,9 +36,20 @@ const GroupFlowNode: React.FC<{ data: { n: BoardNode } }> = ({ data }) => {
       </div>
       <div className="divide-y divide-[var(--ac-line)]/50">
         {n.shown.map((m) => (
-          <div key={m.id} className="flex items-center justify-between px-2.5 py-1.5">
+          <div
+            key={m.id}
+            title={m.ips?.length ? `Client IP: ${m.ips.join(', ')}` : undefined}
+            className="flex items-center justify-between gap-1.5 px-2.5 py-1.5"
+          >
             <span className="truncate">{m.name}</span>
-            {m.problems.length > 0 && <span className="w-2 h-2 rounded-full bg-[var(--ac-bad)]" />}
+            <span className="inline-flex items-center gap-1 shrink-0">
+              {m.concurrentSeverity && (
+                <span className="px-1.5 py-0.5 rounded-full bg-[var(--ac-bad-soft)] text-[var(--ac-bad)] text-[10px] font-bold">
+                  {m.ips && m.ips.length >= 2 ? `${m.ips.length} IPs` : `${m.liveSessions || 2}×`}
+                </span>
+              )}
+              {m.problems.length > 0 && <span className="w-2 h-2 rounded-full bg-[var(--ac-bad)]" />}
+            </span>
           </div>
         ))}
         {n.shown.length === 0 && <div className="px-2.5 py-1.5 text-[var(--ac-muted)]">Empty group</div>}

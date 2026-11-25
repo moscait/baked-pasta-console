@@ -15,9 +15,26 @@ import {
   serpBody,
   serviceBody,
 } from '../features/access-canvas/access-canvas.logic';
+import { looksLikePemCertificate } from '../components/form-values';
 import { BrowserLayoutStore, LayoutStore, layoutStorageKey } from '../features/access-canvas/canvas-layout.store';
-import type { ApiEntities, ApiEnvelope, ApiWriteBody, Collection, ConfigType } from './api-types';
-import { RawDemoStore, createInitialDemoStore } from './demo-store';
+import {
+  ConcurrencyPolicy,
+  DEFAULT_CONCURRENCY_POLICY,
+  RemediationStep,
+  normalizeConcurrencyPolicy,
+} from '../features/sessions/session-monitor.logic';
+import type {
+  ApiEntities,
+  ApiEnvelope,
+  ApiWriteBody,
+  CertificateAuthority,
+  Collection,
+  ConfigType,
+  Identity,
+  ServiceConfigOverride,
+} from './api-types';
+import { DemoCollections, RawDemoStore, createInitialDemoStore, demoFabric } from './demo-store';
+import type { FabricEntities } from '../features/network-map/network-map.logic';
 
 export type { RawDemoStore } from './demo-store';
 export { createInitialDemoStore } from './demo-store';
@@ -74,8 +91,11 @@ export function revertsOf(err: unknown): AcRevert[] {
   return err instanceof CanvasApplyError ? err.reverts : [];
 }
 
+type ApiRoot = 'edge/management/v1' | 'fabric/v1';
+
 const SETTINGS_KEY = 'ziti.settings';
 const DEMO_STORE_KEY = 'bpc.demo.store.v1';
+const CONCURRENCY_POLICY_KEY = 'bpc.concurrency.policy.v1';
 
 const DEFAULT_SETTINGS: ZitiSettings = {
   selectedEdgeController: typeof window !== 'undefined' ? window.location.origin : 'https://localhost:1280',
@@ -158,6 +178,16 @@ function tokensFromResponse(body: OAuthTokenResponse, previousRefresh?: string):
 }
 
 /** Best-effort extraction of a human-readable message from an API error body or thrown value. */
+function refOf(rows: { id: string; name: string }[], id: string) {
+  const row = rows.find((r) => r.id === id);
+  return row ? { id: row.id, name: row.name } : undefined;
+}
+
+function demoRouterJwt(id: string, name: string): string {
+  const jti = Math.random().toString(36).slice(2, 9);
+  return `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(JSON.stringify({ sub: id, name, router: true, jti }))}.router-jwt`;
+}
+
 function messageOf(err: unknown): string {
   if (typeof err === 'string') return err;
   if (!err || typeof err !== 'object') return '';
@@ -172,6 +202,7 @@ function messageOf(err: unknown): string {
 class ZitiServiceImpl {
   private settings: ZitiSettings;
   private listeners = new Set<() => void>();
+  private policyListeners = new Set<() => void>();
   public controllerVersion = 'v1.3.2';
   public oidcEnabled = false;
   public edgeOidcPath = '/oidc';
@@ -203,8 +234,24 @@ class ZitiServiceImpl {
     return () => this.listeners.delete(fn);
   }
 
+  /** Notifies only concurrency-policy readers so tuning thresholds never triggers full API reloads. */
+  subscribePolicy(fn: () => void): () => void {
+    this.policyListeners.add(fn);
+    return () => this.policyListeners.delete(fn);
+  }
+
   private notify(): void {
     this.listeners.forEach((fn) => fn());
+  }
+
+  private notifyPolicy(): void {
+    this.policyListeners.forEach((fn) => fn());
+  }
+
+  /** Active legacy `zt-session` token when present, used to protect this browser session from self-termination. */
+  currentSessionToken(): string | null {
+    if (this.settings.jwtToken && !this.settings.demoMode) return null;
+    return this.settings.session?.id || null;
   }
 
   /** True when this browser had no saved settings at startup, i.e. a first visit. */
@@ -606,35 +653,75 @@ class ZitiServiceImpl {
    * session, and on 401 clears the session exactly once, so pages that reload on `notify()`
    * cannot fall into a 401 -> logout -> notify -> reload -> 401 loop.
    */
-  private async request<T>(method: string, path: string, failure: string, body?: ApiWriteBody): Promise<T> {
-    if (!this.isAuthenticated()) throw new Error('Not signed in to a controller.');
-    if (this.canRefresh() && this.accessTokenExpiringSoon()) await this.refreshSession();
-
-    const send = () =>
-      fetch(`${this.controllerUrl()}/edge/management/v1/${path}`, {
-        method,
-        headers: this.authHeaders(),
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
-    let resp = await send();
-    // One refresh-and-retry for OIDC sessions; the access token may have been revoked or
-    // expired early. Only if that fails is the session cleared.
-    if (resp.status === 401 && this.canRefresh() && (await this.refreshSession())) resp = await send();
-    if (resp.status === 401) {
-      if (this.isAuthenticated()) this.logout();
-      throw new Error('Session expired. Please sign in again.');
-    }
+  private async request<T>(
+    method: string,
+    path: string,
+    failure: string,
+    body?: ApiWriteBody,
+    api: ApiRoot = 'edge/management/v1',
+  ): Promise<T> {
+    const resp = await this.send(method, path, body === undefined ? {} : { body: JSON.stringify(body) }, api);
     // The response body is trusted to match the management API schema for this path.
     const json = (await resp.json().catch(() => null)) as T;
     if (!resp.ok) throw new Error(messageOf(json) || `${failure} (HTTP ${resp.status})`);
     return json;
   }
 
+  /** Like `request`, for the few endpoints that take or return plain text (CA verify, CA JWT). */
+  private async requestText(
+    method: string,
+    path: string,
+    failure: string,
+    opts: { body?: string; contentType?: string; accept?: string } = {},
+  ): Promise<string> {
+    const headers: Record<string, string> = {};
+    if (opts.contentType) headers['Content-Type'] = opts.contentType;
+    if (opts.accept) headers.Accept = opts.accept;
+    const resp = await this.send(method, path, { body: opts.body, headers });
+    const text = await resp.text().catch(() => '');
+    if (!resp.ok) {
+      let detail: unknown = null;
+      try {
+        detail = JSON.parse(text);
+      } catch {
+        // not a JSON error envelope
+      }
+      throw new Error(messageOf(detail) || `${failure} (HTTP ${resp.status})`);
+    }
+    return text;
+  }
+
+  private async send(
+    method: string,
+    path: string,
+    init: { body?: string; headers?: Record<string, string> },
+    api: ApiRoot = 'edge/management/v1',
+  ): Promise<Response> {
+    if (!this.isAuthenticated()) throw new Error('Not signed in to a controller.');
+    if (this.canRefresh() && this.accessTokenExpiringSoon()) await this.refreshSession();
+
+    const once = () =>
+      fetch(`${this.controllerUrl()}/${api}/${path}`, {
+        method,
+        headers: this.authHeaders(init.headers),
+        body: init.body,
+      });
+    let resp = await once();
+    // One refresh-and-retry for OIDC sessions; the access token may have been revoked or
+    // expired early. Only if that fails is the session cleared.
+    if (resp.status === 401 && this.canRefresh() && (await this.refreshSession())) resp = await once();
+    if (resp.status === 401) {
+      if (this.isAuthenticated()) this.logout();
+      throw new Error('Session expired. Please sign in again.');
+    }
+    return resp;
+  }
+
   // ------------------------------------------------------------------ CRUD operations
   async list<K extends Collection>(collection: K): Promise<ApiEntities[K][]> {
     if (this.settings.demoMode) {
-      const store = this.getDemoStore();
-      return clone(store[collection] || []);
+      const collections: DemoCollections = this.getDemoStore();
+      return clone(collections[collection] || []);
     }
     const out: ApiEntities[K][] = [];
     const limit = 500;
@@ -672,23 +759,18 @@ class ZitiServiceImpl {
       };
       if (collection === 'identities') {
         created.authenticators = {};
-        created.enrollment = {
-          ott: {
-            id: `enr-${id}`,
-            jwt: `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(
-              JSON.stringify({ sub: id, name, iss: this.controllerUrl(), exp: 1999999999 }),
-            )}.demo-jwt-sig`,
-            expiresAt: new Date(Date.now() + 86400000).toISOString(),
-          },
-        };
+        created.enrollment = { ott: this.demoOttToken(id, name || id, new Date(Date.now() + 86400000)) };
         created.hasEdgeRouterConnection = false;
       }
-      if (collection === 'edge-routers') {
+      if (collection === 'edge-routers' || collection === 'transit-routers') {
         created.isOnline = false;
         created.isVerified = false;
-        created.enrollmentJwt = `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(
-          JSON.stringify({ sub: id, name, router: true }),
-        )}.router-jwt`;
+        created.enrollmentJwt = demoRouterJwt(id, name || id);
+        created.enrollmentExpiresAt = new Date(Date.now() + 86400000).toISOString();
+      }
+      if (collection === 'cas') {
+        created.isVerified = false;
+        created.verificationToken = Math.random().toString(36).slice(2, 12);
       }
       (store[collection] as unknown[]) = [...(store[collection] || []), created];
       this.saveDemoStore(store);
@@ -723,12 +805,330 @@ class ZitiServiceImpl {
   async remove(collection: Collection, id: string): Promise<void> {
     if (this.settings.demoMode) {
       const store = this.getDemoStore();
-      (store[collection] as { id: string }[]) = (store[collection] || []).filter((x: { id: string }) => x.id !== id);
+      if (collection === 'api-sessions') {
+        const target = (store['api-sessions'] || []).find((s) => s.id === id);
+        store['api-sessions'] = (store['api-sessions'] || []).filter((s) => s.id !== id);
+        store.sessions = (store.sessions || []).filter((s) => s.apiSessionId !== id);
+        if (target?.identityId) {
+          const stillActive = store['api-sessions'].some((s) => s.identityId === target.identityId);
+          const ident = store.identities.find((i) => i.id === target.identityId);
+          if (ident && !stillActive) ident.hasEdgeRouterConnection = false;
+        }
+      } else if (collection === 'authenticators') {
+        store.authenticators = (store.authenticators || []).filter((a) => a.id !== id);
+        for (const ident of store.identities) {
+          if (ident.authenticators?.cert?.id === id) delete ident.authenticators.cert;
+          if (ident.authenticators?.updb?.id === id) delete ident.authenticators.updb;
+        }
+      } else {
+        (store[collection] as { id: string }[]) = (store[collection] || []).filter((x: { id: string }) => x.id !== id);
+      }
       this.saveDemoStore(store);
       return;
     }
 
     await this.request('DELETE', `${collection}/${encodeURIComponent(id)}`, `DELETE ${collection}/${id} failed`);
+  }
+
+  /** Fetches authenticators for a single identity on demand (used before credential revocation). */
+  async listIdentityAuthenticators(identityId: string): Promise<ApiEntities['authenticators'][]> {
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      return clone((store.authenticators || []).filter((a) => a.identityId === identityId || a.identity?.id === identityId));
+    }
+    const json = await this.request<ApiEnvelope<ApiEntities['authenticators'][]> | null>(
+      'GET',
+      `identities/${encodeURIComponent(identityId)}/authenticators`,
+      `Failed to load authenticators for identity ${identityId}`,
+    );
+    return json?.data || [];
+  }
+
+  // ------------------------------------------------------------------ Concurrency Policy & Remediation
+  getConcurrencyPolicy(): ConcurrencyPolicy {
+    try {
+      const raw = localStorage.getItem(CONCURRENCY_POLICY_KEY);
+      if (raw) return normalizeConcurrencyPolicy(JSON.parse(raw) as Partial<ConcurrencyPolicy>);
+    } catch {
+      // ignore
+    }
+    return { ...DEFAULT_CONCURRENCY_POLICY };
+  }
+
+  saveConcurrencyPolicy(next: Partial<ConcurrencyPolicy>): ConcurrencyPolicy {
+    const normalized = normalizeConcurrencyPolicy({ ...this.getConcurrencyPolicy(), ...next });
+    try {
+      localStorage.setItem(CONCURRENCY_POLICY_KEY, JSON.stringify(normalized));
+    } catch {
+      // ignore
+    }
+    this.notifyPolicy();
+    return normalized;
+  }
+
+  resetConcurrencyPolicy(): ConcurrencyPolicy {
+    try {
+      localStorage.removeItem(CONCURRENCY_POLICY_KEY);
+    } catch {
+      // ignore
+    }
+    this.notifyPolicy();
+    return { ...DEFAULT_CONCURRENCY_POLICY };
+  }
+
+  /**
+   * Executes remediation steps sequentially. Stops immediately if an authenticator DELETE fails
+   * so active sessions are not dropped while leaving the credential valid.
+   */
+  async executeRemediationSteps(steps: RemediationStep[]): Promise<{ executed: number; failures: string[] }> {
+    let executed = 0;
+    const failures: string[] = [];
+    for (const step of steps) {
+      try {
+        await this.remove(step.collection, step.targetId);
+        executed++;
+      } catch (err) {
+        failures.push(`${step.collection}/${step.targetId}: ${this.errorText(err)}`);
+        if (step.collection === 'authenticators') break;
+      }
+    }
+    return { executed, failures };
+  }
+
+  // ------------------------------------------------------------------ fabric API (circuits, links, routers)
+
+  /**
+   * Lists a fabric management collection (`/fabric/v1/<collection>`), paging like `list`.
+   * The fabric API is served by the same controller with the same session; it can be
+   * disabled or restricted, so callers should treat a failure as "live data unavailable".
+   */
+  async listFabric<K extends keyof FabricEntities>(collection: K): Promise<FabricEntities[K][]> {
+    if (this.settings.demoMode) return clone(demoFabric(this.getDemoStore())[collection]) as FabricEntities[K][];
+    const out: FabricEntities[K][] = [];
+    const limit = 500;
+    for (let page = 0; page < 200; page++) {
+      const json = await this.request<ApiEnvelope<FabricEntities[K][]> | null>(
+        'GET',
+        `${collection}?limit=${limit}&offset=${page * limit}`,
+        `Failed to load fabric ${collection}`,
+        undefined,
+        'fabric/v1',
+      );
+      const rows = json?.data || [];
+      out.push(...rows);
+      const total = json?.meta?.pagination?.totalCount;
+      if (rows.length < limit || (typeof total === 'number' && out.length >= total)) return out;
+    }
+    throw new Error(`Stopped loading fabric ${collection}; pagination did not terminate.`);
+  }
+
+  /**
+   * Sets or clears an identity's or router's `geolocation` tag ("lat,lng"), the same tag the
+   * upstream console's Geolocate map reads. Tags are replaced as a whole map, so the entity's
+   * other tags are sent back unchanged.
+   */
+  async saveGeolocation(
+    collection: 'identities' | 'edge-routers' | 'transit-routers',
+    entity: { id: string; tags?: Record<string, unknown> },
+    geolocation: string | null,
+  ): Promise<void> {
+    const tags: Record<string, unknown> = { ...(entity.tags || {}) };
+    if (geolocation) tags.geolocation = geolocation;
+    else delete tags.geolocation;
+    // An empty tags object is ignored by the controller's PATCH, which would leave the old
+    // location in place; the upstream console sends a placeholder tag for the same reason.
+    if (!Object.keys(tags).length) tags.temp = 'empty';
+    await this.patch(collection, entity.id, { tags });
+  }
+
+  // ------------------------------------------------------------------ enrollment lifecycle
+
+  private demoOttToken(identityId: string, name: string, expiresAt: Date) {
+    const nonce = Math.random().toString(36).slice(2, 9);
+    return {
+      id: `enr-${identityId}-${nonce}`,
+      jwt: `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(
+        JSON.stringify({ sub: identityId, name, iss: this.controllerUrl(), jti: nonce, exp: Math.floor(expiresAt.getTime() / 1000) }),
+      )}.demo-jwt-sig`,
+      expiresAt: expiresAt.toISOString(),
+    };
+  }
+
+  /**
+   * Revokes an enrolled identity's authenticator and issues a new one-time enrollment token
+   * (`POST authenticators/{id}/re-enroll`). The device's current certificate or password stops
+   * working; it must enroll again with the new token before `expiresAt`.
+   */
+  async resetEnrollment(identity: Identity, expiresAt: Date): Promise<void> {
+    const authId = identity.authenticators?.cert?.id || identity.authenticators?.updb?.id;
+    if (!authId) throw new Error(`${identity.name} has no authenticator to reset.`);
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      const ident = store.identities.find((i) => i.id === identity.id);
+      if (ident) {
+        ident.authenticators = {};
+        ident.enrollment = { ott: this.demoOttToken(ident.id, ident.name, expiresAt) };
+        ident.hasEdgeRouterConnection = false;
+        this.saveDemoStore(store);
+      }
+      return;
+    }
+    await this.request('POST', `authenticators/${encodeURIComponent(authId)}/re-enroll`, 'Reset enrollment failed', {
+      expiresAt: expiresAt.toISOString(),
+    });
+    this.notify();
+  }
+
+  /**
+   * Replaces a pending (not yet used) enrollment token with a new one that expires at
+   * `expiresAt` (`POST enrollments/{id}/refresh`). The old JWT stops working.
+   */
+  async reissueEnrollment(identity: Identity, expiresAt: Date): Promise<void> {
+    const e = identity.enrollment;
+    const enrollmentId = e?.ott?.id || e?.ottca?.id || e?.updb?.id || e?.ca?.id;
+    if (!enrollmentId) throw new Error(`${identity.name} has no pending enrollment to reissue.`);
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      const ident = store.identities.find((i) => i.id === identity.id);
+      if (ident) {
+        ident.enrollment = { ott: this.demoOttToken(ident.id, ident.name, expiresAt) };
+        this.saveDemoStore(store);
+      }
+      return;
+    }
+    await this.request('POST', `enrollments/${encodeURIComponent(enrollmentId)}/refresh`, 'Reissue enrollment failed', {
+      expiresAt: expiresAt.toISOString(),
+    });
+    this.notify();
+  }
+
+  /** Removes an identity's MFA (TOTP) enrollment so the user can set it up again (`DELETE identities/{id}/mfa`). */
+  async resetMfa(identity: Identity): Promise<void> {
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      const ident = store.identities.find((i) => i.id === identity.id);
+      if (ident) {
+        ident.isMfaEnabled = false;
+        this.saveDemoStore(store);
+      }
+      return;
+    }
+    await this.request('DELETE', `identities/${encodeURIComponent(identity.id)}/mfa`, 'Reset MFA failed');
+    this.notify();
+  }
+
+  // ------------------------------------------------------------------ router enrollment
+
+  /**
+   * Re-enrolls a router (`POST edge-routers/{id}/re-enroll` or the transit equivalent). The
+   * router's certificate is revoked and it disconnects until it enrolls with the new JWT.
+   */
+  async reEnrollRouter(collection: 'edge-routers' | 'transit-routers', router: { id: string; name: string }) {
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      const rows: { id: string; name: string; isOnline?: boolean; isVerified?: boolean; enrollmentJwt?: string; enrollmentExpiresAt?: string }[] =
+        store[collection];
+      const row = rows.find((r) => r.id === router.id);
+      if (row) {
+        row.isOnline = false;
+        row.isVerified = false;
+        row.enrollmentJwt = demoRouterJwt(row.id, row.name);
+        row.enrollmentExpiresAt = new Date(Date.now() + 86400000).toISOString();
+        this.saveDemoStore(store);
+      }
+      return;
+    }
+    await this.request('POST', `${collection}/${encodeURIComponent(router.id)}/re-enroll`, 'Re-enroll failed', {});
+    this.notify();
+  }
+
+  // ------------------------------------------------------------------ certificate authorities
+
+  /** The enrollment JWT for identities that enroll with a certificate from this CA (`GET cas/{id}/jwt`). */
+  async caEnrollmentJwt(ca: CertificateAuthority): Promise<string> {
+    if (this.settings.demoMode) {
+      return `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(JSON.stringify({ em: 'ca', ca: ca.id }))}.demo-ca-jwt`;
+    }
+    return this.requestText('GET', `cas/${encodeURIComponent(ca.id)}/jwt`, 'Failed to fetch the CA JWT', {
+      accept: 'application/jwt',
+    });
+  }
+
+  /**
+   * Proves possession of a CA's private key (`POST cas/{id}/verify`). The body is a PEM
+   * certificate signed by the CA whose common name is the CA's `verificationToken`.
+   */
+  async verifyCa(ca: CertificateAuthority, certPem: string): Promise<void> {
+    if (!looksLikePemCertificate(certPem)) throw new Error('Paste a PEM certificate (-----BEGIN CERTIFICATE----- …).');
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      const row = store.cas.find((c) => c.id === ca.id);
+      if (row) {
+        row.isVerified = true;
+        this.saveDemoStore(store);
+      }
+      return;
+    }
+    await this.requestText('POST', `cas/${encodeURIComponent(ca.id)}/verify`, 'CA verification failed', {
+      body: certPem.trim(),
+      contentType: 'text/plain',
+    });
+    this.notify();
+  }
+
+  // ------------------------------------------------------------------ identity service config overrides
+
+  /** Configs this identity uses instead of a service's own (`GET identities/{id}/service-configs`). */
+  async listServiceConfigOverrides(identityId: string): Promise<ServiceConfigOverride[]> {
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      return (store.serviceConfigOverrides?.[identityId] || []).map((o) => ({
+        ...o,
+        service: refOf(store.services, o.serviceId),
+        config: refOf(store.configs, o.configId),
+      }));
+    }
+    const json = await this.request<ApiEnvelope<ServiceConfigOverride[]> | null>(
+      'GET',
+      `identities/${encodeURIComponent(identityId)}/service-configs?limit=500`,
+      'Failed to load config overrides',
+    );
+    return (json?.data || []).map((o) => ({
+      ...o,
+      serviceId: o.serviceId || o.service?.id || '',
+      configId: o.configId || o.config?.id || '',
+    }));
+  }
+
+  async addServiceConfigOverride(identityId: string, serviceId: string, configId: string): Promise<void> {
+    await this.changeServiceConfigOverride('POST', identityId, { serviceId, configId });
+  }
+
+  async removeServiceConfigOverride(identityId: string, serviceId: string, configId: string): Promise<void> {
+    await this.changeServiceConfigOverride('DELETE', identityId, { serviceId, configId });
+  }
+
+  private async changeServiceConfigOverride(
+    method: 'POST' | 'DELETE',
+    identityId: string,
+    pair: { serviceId: string; configId: string },
+  ): Promise<void> {
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      const all = store.serviceConfigOverrides || {};
+      const current = (all[identityId] || []).filter(
+        (o) => !(o.serviceId === pair.serviceId && o.configId === pair.configId),
+      );
+      all[identityId] = method === 'POST' ? [...current, pair] : current;
+      store.serviceConfigOverrides = all;
+      this.saveDemoStore(store);
+      return;
+    }
+    const path = `identities/${encodeURIComponent(identityId)}/service-configs`;
+    await this.request(method, path, method === 'POST' ? 'Adding the override failed' : 'Removing the override failed', [
+      pair,
+    ]);
+    this.notify();
   }
 
   /** Simulates enrolling an identity in Demo Mode so the user can see live status updates! */
@@ -767,6 +1167,7 @@ class ZitiServiceImpl {
         isAdmin:
           !!i.isDefaultAdmin ||
           (!!i.isAdmin && !i.roleAttributes?.length && !i.authenticators?.cert && !i.enrollment?.ott),
+        externalId: i.externalId,
       }));
     const services: AcService[] = svcs.map((s) => ({
       id: s.id,

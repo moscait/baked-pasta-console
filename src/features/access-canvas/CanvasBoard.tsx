@@ -649,7 +649,12 @@ export const CanvasBoard = React.forwardRef<CanvasBoardHandle, CanvasBoardProps>
                               if (resolved) onCommand({ cmd: 'advise', items: [resolved] });
                             }}
                             onContextMenu={(ev) => handleContextMenu(ev, mKey)}
-                            title={m.problems.length ? m.problems.join('; ') : undefined}
+                            title={
+                              [
+                                ...(m.ips?.length ? [`Client IP: ${m.ips.join(', ')}`] : []),
+                                ...m.problems,
+                              ].join('; ') || undefined
+                            }
                             className={[
                               'ab-row',
                               selected.has(mKey) ? 'sel' : '',
@@ -666,6 +671,11 @@ export const CanvasBoard = React.forwardRef<CanvasBoardHandle, CanvasBoardProps>
                               </span>
                             )}
                             <span className="ab-name">{m.name}</span>
+                            {m.concurrentSeverity && (
+                              <span className={`ab-ip-badge ${m.concurrentSeverity}`}>
+                                {m.ips && m.ips.length >= 2 ? `${m.ips.length} IPs` : `${m.liveSessions || 2}×`}
+                              </span>
+                            )}
                             {m.problems.length > 0 && <span className="ab-dot bad" aria-label={m.problems.join('; ')} />}
                             {m.pending && <span className="ab-dot pend" aria-label="pending change" />}
                           </div>
@@ -714,9 +724,10 @@ export const CanvasBoard = React.forwardRef<CanvasBoardHandle, CanvasBoardProps>
                     onMouseEnter={() => setHotNode(n.key)}
                     onMouseLeave={() => setHotNode(null)}
                     title={
-                      n.problems.length
-                        ? n.problems.join('; ')
-                        : 'In no group yet. Drag it onto a group to add it there.'
+                      [
+                        ...(n.entity?.ips?.length ? [`Client IP: ${n.entity.ips.join(', ')}`] : []),
+                        ...n.problems,
+                      ].join('; ') || 'In no group yet. Drag it onto a group to add it there.'
                     }
                     className={[
                       'ab-node ab-free',
@@ -732,6 +743,13 @@ export const CanvasBoard = React.forwardRef<CanvasBoardHandle, CanvasBoardProps>
                   >
                     <span className="ab-kind">{kindLetter(n.kind)}</span>
                     <span className="ab-name">{n.entity!.name}</span>
+                    {n.entity?.concurrentSeverity && (
+                      <span className={`ab-ip-badge ${n.entity.concurrentSeverity}`}>
+                        {n.entity.ips && n.entity.ips.length >= 2
+                          ? `${n.entity.ips.length} IPs`
+                          : `${n.entity.liveSessions || 2}×`}
+                      </span>
+                    )}
                     {n.problemCount > 0 && <span className="ab-dot bad" />}
                     {n.pending && <span className="ab-dot pend" />}
                   </div>

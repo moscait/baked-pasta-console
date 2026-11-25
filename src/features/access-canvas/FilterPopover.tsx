@@ -1,8 +1,10 @@
 import React, { Dispatch, SetStateAction, useMemo, useState } from 'react';
-import { Check, ChevronDown, Filter } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Activity, AlertTriangle, Check, ChevronDown, Filter } from 'lucide-react';
 import { AcKind, AcModel, KIND_LABEL, entitiesOf } from './access-canvas.logic';
 import type { BoardFilters } from './canvas-board.logic';
 import { KINDS } from './canvas-page.shared';
+import { validateIpFilter } from '../sessions/session-monitor.logic';
 
 /** Every role attribute in the draft, with how many entities carry it and of which kinds. */
 function attributeIndex(draft: AcModel | null, query: string) {
@@ -29,7 +31,7 @@ function attributeIndex(draft: AcModel | null, query: string) {
     }));
 }
 
-/** "Filters" button with the entity-kind and role-attribute filter popover. */
+/** "Filters" button with entity-kind, traffic/client-IP, and role-attribute filter controls. */
 export const FilterPopover: React.FC<{
   draft: AcModel | null;
   filters: BoardFilters;
@@ -40,7 +42,23 @@ export const FilterPopover: React.FC<{
   const [open, setOpen] = useState(false);
   const [attrQuery, setAttrQuery] = useState('');
   const allAttrs = useMemo(() => attributeIndex(draft, attrQuery), [draft, attrQuery]);
-  const narrowCount = KINDS.filter((k) => !filters.types[k]).length + filters.attrs.length;
+
+  const trafficCounts = useMemo(() => {
+    const nonAdmin = (draft?.identities || []).filter((i) => !i.isAdmin);
+    return {
+      active: nonAdmin.filter((i) => (i.liveSessionCount || 0) > 0).length,
+      concurrent: nonAdmin.filter((i) => !!i.concurrency).length,
+    };
+  }, [draft]);
+
+  const ipCheck = useMemo(() => validateIpFilter(filters.ipFilter || ''), [filters.ipFilter]);
+
+  const narrowCount =
+    KINDS.filter((k) => !filters.types[k]).length +
+    filters.attrs.length +
+    (filters.ipFilter?.trim() ? 1 : 0) +
+    (filters.concurrentOnly ? 1 : 0) +
+    (filters.activeSessionsOnly ? 1 : 0);
 
   return (
     <div className="relative">
@@ -52,7 +70,7 @@ export const FilterPopover: React.FC<{
         <Filter className="w-3.5 h-3.5 text-[var(--ac-muted)]" />
         <span>Filters</span>
         {narrowCount > 0 && (
-          <span className="px-1.5 py-0.2 rounded-full bg-[var(--ac-dial)] text-white text-[10px] font-bold">
+          <span className="px-1.5 py-0.5 rounded-full bg-[var(--ac-dial)] text-white text-[10px] font-bold">
             {narrowCount}
           </span>
         )}
@@ -62,7 +80,7 @@ export const FilterPopover: React.FC<{
       {open && (
         <>
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-9 z-30 w-80 p-3.5 rounded-xl bg-[var(--ac-surface)] border border-[var(--ac-line)] shadow-2xl space-y-3 text-xs">
+          <div className="absolute left-0 top-9 z-30 w-84 p-3.5 rounded-xl bg-[var(--ac-surface)] border border-[var(--ac-line)] shadow-2xl space-y-3.5 text-xs">
             <div className="space-y-1.5">
               <div className="font-semibold">Show Entity Kinds</div>
               <div className="flex flex-wrap gap-1.5">
@@ -92,7 +110,68 @@ export const FilterPopover: React.FC<{
               </div>
             </div>
 
-            <div className="space-y-1.5">
+            {/* Traffic & Client IP Filtering */}
+            <div className="space-y-2 pt-2.5 border-t border-[var(--ac-line)]">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold">Traffic &amp; Client IPs</span>
+                <Link
+                  to="/sessions"
+                  onClick={() => setOpen(false)}
+                  className="text-[11px] text-[var(--ac-dial)] hover:underline"
+                >
+                  Sessions &amp; policy →
+                </Link>
+              </div>
+              <input
+                type="text"
+                placeholder="Client IP or CIDR (e.g. 203.0.113.0/24, !10.0.0.0/8)"
+                value={filters.ipFilter || ''}
+                onChange={(e) => setFilters((prev) => ({ ...prev, ipFilter: e.target.value }))}
+                aria-invalid={!ipCheck.valid}
+                className={`w-full px-2.5 py-1.5 rounded-md border bg-[var(--ac-surface-2)] font-mono text-[11.5px] ${
+                  ipCheck.valid ? 'border-[var(--ac-line)]' : 'border-[var(--ac-pending)]'
+                }`}
+              />
+              {!ipCheck.valid && (
+                <div className="text-[11px] text-[var(--ac-pending)]">{ipCheck.error}</div>
+              )}
+
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFilters((prev) => ({ ...prev, activeSessionsOnly: !prev.activeSessionsOnly }))
+                  }
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border cursor-pointer ${
+                    filters.activeSessionsOnly
+                      ? 'border-[var(--ac-dial)] bg-[var(--ac-dial-soft)] text-[var(--ac-ink)] font-medium'
+                      : 'border-[var(--ac-line)] text-[var(--ac-muted)]'
+                  }`}
+                >
+                  <Activity className="w-3 h-3" />
+                  <span>Active sessions ({trafficCounts.active})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFilters((prev) => ({ ...prev, concurrentOnly: !prev.concurrentOnly }))
+                  }
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border cursor-pointer ${
+                    filters.concurrentOnly
+                      ? 'border-[var(--ac-bad)] bg-[var(--ac-bad-soft)] text-[var(--ac-bad)] font-semibold'
+                      : trafficCounts.concurrent > 0
+                        ? 'border-[var(--ac-bad)]/45 text-[var(--ac-bad)]'
+                        : 'border-[var(--ac-line)] text-[var(--ac-muted)]'
+                  }`}
+                >
+                  <AlertTriangle className="w-3 h-3" />
+                  <span>Concurrent / Multi-IP ({trafficCounts.concurrent})</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 pt-2.5 border-t border-[var(--ac-line)]">
               <div className="font-semibold">Role Attributes</div>
               <input
                 type="search"
@@ -101,7 +180,7 @@ export const FilterPopover: React.FC<{
                 onChange={(e) => setAttrQuery(e.target.value)}
                 className="w-full px-2.5 py-1 rounded-md border border-[var(--ac-line)] bg-[var(--ac-surface-2)] text-xs"
               />
-              <div className="max-h-52 overflow-y-auto space-y-0.5">
+              <div className="max-h-44 overflow-y-auto space-y-0.5">
                 {allAttrs.map((a) => {
                   const on = filters.attrs.includes(a.attr);
                   return (

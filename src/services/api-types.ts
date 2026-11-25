@@ -21,6 +21,10 @@ export interface ApiErrorBody {
   };
 }
 
+/** Any value that survives a JSON round trip; used for free-form maps such as `appData`. */
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+export type JsonObject = { [key: string]: JsonValue };
+
 /** A reference to another entity, as embedded in list responses. */
 export interface EntityRef {
   id?: string;
@@ -53,11 +57,41 @@ export interface Identity extends NamedEntity {
   type?: EntityRef;
   isAdmin?: boolean;
   isDefaultAdmin?: boolean;
+  disabled?: boolean;
+  externalId?: string | null;
+  authPolicyId?: string;
   roleAttributes?: string[];
-  authenticators?: { updb?: { id: string }; cert?: { id: string } };
+  authenticators?: {
+    updb?: { id?: string; username?: string };
+    cert?: { id?: string; fingerprint?: string };
+  };
   enrollment?: { ott?: EnrollmentToken; updb?: EnrollmentToken; ca?: EnrollmentToken; ottca?: EnrollmentToken };
   hasEdgeRouterConnection?: boolean;
+  isMfaEnabled?: boolean;
   sdkInfo?: { type?: string; appId?: string; version?: string };
+  authPolicy?: EntityRef;
+  defaultHostingCost?: number;
+  defaultHostingPrecedence?: HostingPrecedence;
+  appData?: JsonObject;
+}
+
+export type HostingPrecedence = 'default' | 'required' | 'failed';
+
+/** One identity-specific config override (`identities/{id}/service-configs`). */
+export interface ServiceConfigOverride {
+  serviceId: string;
+  configId: string;
+  service?: EntityRef;
+  config?: EntityRef;
+}
+
+export interface Authenticator extends BaseEntity {
+  method?: 'cert' | 'updb' | string;
+  identityId?: string;
+  identity?: EntityRef;
+  fingerprint?: string;
+  certPem?: string;
+  isIssuedByNetwork?: boolean;
 }
 
 // ------------------------------------------------------------------ services & configs
@@ -101,13 +135,17 @@ export interface EdgeRouter extends NamedEntity {
   noTraversal?: boolean;
   versionInfo?: { version?: string };
   enrollmentJwt?: string;
+  enrollmentExpiresAt?: string;
+  appData?: JsonObject;
 }
 
 export interface TransitRouter extends NamedEntity {
   isOnline?: boolean;
   isVerified?: boolean;
   cost?: number;
+  noTraversal?: boolean;
   enrollmentJwt?: string;
+  enrollmentExpiresAt?: string;
 }
 
 // ------------------------------------------------------------------ policies
@@ -148,47 +186,97 @@ export interface PostureCheck extends NamedEntity {
 
 // ------------------------------------------------------------------ authentication
 
+export type CaClaimLocation = 'COMMON_NAME' | 'SAN_URI' | 'SAN_EMAIL';
+export type CaClaimMatcher = 'ALL' | 'PREFIX' | 'SUFFIX' | 'SCHEME';
+export type CaClaimParser = 'NONE' | 'SPLIT';
+
+/** How an identity's `externalId` is read from a certificate issued by this CA. */
+export interface CaExternalIdClaim {
+  location: CaClaimLocation;
+  matcher: CaClaimMatcher;
+  matcherCriteria: string;
+  parser: CaClaimParser;
+  parserCriteria: string;
+  index: number;
+}
+
 export interface CertificateAuthority extends NamedEntity {
   isVerified?: boolean;
   isAutoCaEnrollmentEnabled?: boolean;
   isOttCaEnrollmentEnabled?: boolean;
   isAuthEnabled?: boolean;
   identityRoles?: string[];
+  identityNameFormat?: string;
+  certPem?: string;
+  fingerprint?: string;
+  verificationToken?: string;
+  externalIdClaim?: CaExternalIdClaim | null;
 }
 
 export interface AuthPolicy extends NamedEntity {
   primary?: {
     cert?: { allowed?: boolean; allowExpiredCerts?: boolean };
-    updb?: { allowed?: boolean; minPasswordLength?: number; requireMixedCase?: boolean };
+    updb?: {
+      allowed?: boolean;
+      minPasswordLength?: number;
+      requireMixedCase?: boolean;
+      requireNumberChar?: boolean;
+      requireSpecialChar?: boolean;
+      maxAttempts?: number;
+      lockoutDurationMinutes?: number;
+    };
     extJwt?: { allowed?: boolean; allowedSigners?: string[] };
   };
   secondary?: { requireTotp?: boolean; requireExtJwtSigner?: string | null };
 }
 
+export type JwtTargetToken = 'ACCESS' | 'ID';
+
 export interface ExternalJwtSigner extends NamedEntity {
   issuer?: string;
   audience?: string;
-  jwksEndpoint?: string;
+  jwksEndpoint?: string | null;
+  certPem?: string | null;
+  kid?: string | null;
   enabled?: boolean;
   claimsProperty?: string;
   useExternalId?: boolean;
+  clientId?: string | null;
+  scopes?: string[];
+  externalAuthUrl?: string | null;
+  targetToken?: JwtTargetToken;
+  enrollToCertEnabled?: boolean;
+  enrollToTokenEnabled?: boolean;
+  enrollNameClaimsSelector?: string;
+  enrollAttributeClaimsSelector?: string;
+  enrollAuthPolicyId?: string;
 }
 
 // ------------------------------------------------------------------ sessions
 
+/** Matches `sessionDetail` / `sessionManagementDetail` in `openziti/edge-api`. */
 export interface Session extends BaseEntity {
+  apiSessionId?: string;
+  apiSession?: EntityRef;
   serviceId?: string;
   service?: EntityRef;
   identityId?: string;
   type?: 'Dial' | 'Bind';
+  edgeRouters?: { id?: string; name: string; hostname?: string; urls?: Record<string, string> }[];
 }
 
+/** Matches `apiSessionDetail` in `openziti/edge-api`. */
 export interface ApiSession extends BaseEntity {
+  token?: string;
   identityId?: string;
   identity?: EntityRef;
   ipAddress?: string;
+  authenticatorId?: string;
   authQueries?: unknown[];
   lastActivityAt?: string;
+  cachedLastActivityAt?: string;
+  isMfaComplete?: boolean;
+  configTypes?: string[];
 }
 
 // ------------------------------------------------------------------ collection map
@@ -196,6 +284,7 @@ export interface ApiSession extends BaseEntity {
 /** Maps each management API collection path to the entity it returns. */
 export interface ApiEntities {
   identities: Identity;
+  authenticators: Authenticator;
   services: Service;
   'edge-routers': EdgeRouter;
   'transit-routers': TransitRouter;

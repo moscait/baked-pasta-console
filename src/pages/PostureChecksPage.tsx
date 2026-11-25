@@ -3,6 +3,7 @@ import type { PostureCheck } from '../services/api-types';
 import { zitiService } from '../services/ziti-service';
 import { DataTable, ColumnDef } from '../components/DataTable';
 import { ModalDialog } from '../components/ModalDialog';
+import { useCreateIntent } from '../components/useCreateIntent';
 
 export const PostureChecksPage: React.FC<{
   onToast: (level: 'info' | 'success' | 'warning' | 'error', title: string, detail?: string) => void;
@@ -12,6 +13,15 @@ export const PostureChecksPage: React.FC<{
   const [name, setName] = useState('');
   const [typeId, setTypeId] = useState('MFA');
   const [attrs, setAttrs] = useState('mfa-required');
+
+  const openNewPostureCheck = () => {
+    setName('');
+    setTypeId('MFA');
+    setAttrs('mfa-required');
+    setModalOpen(true);
+  };
+
+  useCreateIntent({ 'posture-check': openNewPostureCheck });
 
   const load = useCallback(async () => {
     try {
@@ -73,12 +83,7 @@ export const PostureChecksPage: React.FC<{
         data={rows}
         columns={columns}
         createLabel="New Posture Check"
-        onCreate={() => {
-          setName('');
-          setTypeId('MFA');
-          setAttrs('mfa-required');
-          setModalOpen(true);
-        }}
+        onCreate={openNewPostureCheck}
         onDelete={async (row) => {
           await zitiService.remove('posture-checks', row.id);
           onToast('info', 'Posture check deleted', row.name);

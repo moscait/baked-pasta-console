@@ -1,10 +1,20 @@
-import type { ApiEntities, Collection } from './api-types';
+import type { ApiEntities, Collection, ServiceConfigOverride } from './api-types';
+import type { FabricCircuit, FabricEntities, FabricLink, FabricRouter } from '../features/network-map/network-map.logic';
+import { parseGeolocation } from '../features/network-map/network-map.logic';
 
 /** In-browser stand-in for the controller's data, used by the Interactive Demo Sandbox. */
-export type RawDemoStore = { [K in Collection]: ApiEntities[K][] };
+/** The demo rows for every management collection, shaped like controller responses. */
+export type DemoCollections = { [K in Collection]: ApiEntities[K][] };
+
+export type RawDemoStore = DemoCollections & {
+  /** Per-identity service config overrides (`identities/{id}/service-configs`), keyed by identity id. */
+  serviceConfigOverrides?: Record<string, ServiceConfigOverride[]>;
+};
 
 export function createInitialDemoStore(): RawDemoStore {
-  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
+  const secsAgo = (s: number) => new Date(nowMs - s * 1000).toISOString();
   return {
     'config-types': [
       {
@@ -100,6 +110,7 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'id-alice',
+        tags: { geolocation: '40.71280,-74.00600' },
         name: 'alice-macbook',
         typeId: 'Default',
         type: { name: 'Default' },
@@ -113,6 +124,7 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'id-bob',
+        tags: { geolocation: '51.50740,-0.12780' },
         name: 'bob-thinkpad',
         typeId: 'Default',
         type: { name: 'Default' },
@@ -126,6 +138,7 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'id-carla',
+        tags: { geolocation: '52.52000,13.40500' },
         name: 'carla-linux',
         typeId: 'Default',
         type: { name: 'Default' },
@@ -157,6 +170,7 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'id-crm-host',
+        tags: { geolocation: '39.04380,-77.48740' },
         name: 'crm-prod-01',
         typeId: 'Default',
         type: { name: 'Default' },
@@ -170,6 +184,7 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'id-devbox-host',
+        tags: { geolocation: '41.87810,-87.62980' },
         name: 'devbox',
         typeId: 'Default',
         type: { name: 'Default' },
@@ -183,6 +198,7 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'id-billing-host',
+        tags: { geolocation: '50.11090,8.68210' },
         name: 'billing-db',
         typeId: 'Default',
         type: { name: 'Default' },
@@ -212,6 +228,15 @@ export function createInitialDemoStore(): RawDemoStore {
         hasEdgeRouterConnection: false,
         createdAt: now,
       },
+    ],
+    authenticators: [
+      { id: 'auth-1', method: 'updb', identityId: 'id-admin', identity: { id: 'id-admin', name: 'Default Admin' }, createdAt: now },
+      { id: 'auth-2', method: 'cert', identityId: 'id-alice', identity: { id: 'id-alice', name: 'alice-macbook' }, fingerprint: 'a1:b2:c3:02', createdAt: now },
+      { id: 'auth-3', method: 'cert', identityId: 'id-bob', identity: { id: 'id-bob', name: 'bob-thinkpad' }, fingerprint: 'd4:e5:f6:03', createdAt: now },
+      { id: 'auth-4', method: 'cert', identityId: 'id-carla', identity: { id: 'id-carla', name: 'carla-linux' }, fingerprint: '98:76:54:04', createdAt: now },
+      { id: 'auth-5', method: 'cert', identityId: 'id-crm-host', identity: { id: 'id-crm-host', name: 'crm-prod-01' }, fingerprint: '11:22:33:05', createdAt: now },
+      { id: 'auth-6', method: 'cert', identityId: 'id-devbox-host', identity: { id: 'id-devbox-host', name: 'devbox' }, fingerprint: '44:55:66:06', createdAt: now },
+      { id: 'auth-7', method: 'cert', identityId: 'id-billing-host', identity: { id: 'id-billing-host', name: 'billing-db' }, fingerprint: '77:88:99:07', createdAt: now },
     ],
     services: [
       {
@@ -254,6 +279,7 @@ export function createInitialDemoStore(): RawDemoStore {
     'edge-routers': [
       {
         id: 'er-us-east',
+        tags: { geolocation: '38.94450,-77.45580' },
         name: 'us-east-edge-01',
         roleAttributes: ['public', 'us-east'],
         isOnline: true,
@@ -265,6 +291,7 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'er-eu-west',
+        tags: { geolocation: '53.34980,-6.26030' },
         name: 'eu-west-edge-01',
         roleAttributes: ['public', 'eu-west'],
         isOnline: true,
@@ -289,6 +316,7 @@ export function createInitialDemoStore(): RawDemoStore {
     'transit-routers': [
       {
         id: 'tr-core-01',
+        tags: { geolocation: '52.36760,4.90410' },
         name: 'core-fabric-transit-01',
         isOnline: true,
         isVerified: true,
@@ -478,40 +506,200 @@ export function createInitialDemoStore(): RawDemoStore {
     sessions: [
       {
         id: 'sess-01',
+        apiSessionId: 'apisess-02',
+        apiSession: { id: 'apisess-02', name: '' },
         serviceId: 'svc-crm',
-        service: { name: 'crm-https' },
+        service: { id: 'svc-crm', name: 'crm-https' },
         identityId: 'id-alice',
         type: 'Dial',
-        createdAt: now,
+        edgeRouters: [{ id: 'er-us-east', name: 'us-east-edge-01' }],
+        createdAt: secsAgo(45),
       },
       {
         id: 'sess-02',
+        apiSessionId: 'apisess-03',
+        apiSession: { id: 'apisess-03', name: '' },
         serviceId: 'svc-ssh',
-        service: { name: 'devbox-ssh' },
+        service: { id: 'svc-ssh', name: 'devbox-ssh' },
         identityId: 'id-bob',
         type: 'Dial',
-        createdAt: now,
+        edgeRouters: [{ id: 'er-us-east', name: 'us-east-edge-01' }],
+        createdAt: secsAgo(30),
+      },
+      {
+        id: 'sess-03',
+        apiSessionId: 'apisess-04',
+        apiSession: { id: 'apisess-04', name: '' },
+        serviceId: 'svc-pg',
+        service: { id: 'svc-pg', name: 'billing-db-postgres' },
+        identityId: 'id-bob',
+        type: 'Dial',
+        edgeRouters: [{ id: 'er-eu-west', name: 'eu-west-edge-01' }],
+        createdAt: secsAgo(12),
+      },
+      {
+        id: 'sess-04',
+        apiSessionId: 'apisess-05',
+        apiSession: { id: 'apisess-05', name: '' },
+        serviceId: 'svc-ssh',
+        service: { id: 'svc-ssh', name: 'devbox-ssh' },
+        identityId: 'id-carla',
+        type: 'Dial',
+        edgeRouters: [{ id: 'er-us-east', name: 'us-east-edge-01' }],
+        createdAt: secsAgo(20),
+      },
+      {
+        id: 'sess-05',
+        apiSessionId: 'apisess-06',
+        apiSession: { id: 'apisess-06', name: '' },
+        serviceId: 'svc-crm',
+        service: { id: 'svc-crm', name: 'crm-https' },
+        identityId: 'id-crm-host',
+        type: 'Bind',
+        edgeRouters: [{ id: 'er-us-east', name: 'us-east-edge-01' }],
+        createdAt: secsAgo(120),
       },
     ],
     'api-sessions': [
       {
         id: 'apisess-01',
+        token: 'demo-session-token',
         identityId: 'id-admin',
-        identity: { name: 'Default Admin' },
+        identity: { id: 'id-admin', name: 'Default Admin' },
+        authenticatorId: 'auth-1',
         ipAddress: '127.0.0.1',
         authQueries: [],
-        lastActivityAt: now,
-        createdAt: now,
+        lastActivityAt: secsAgo(4),
+        createdAt: secsAgo(1800),
       },
       {
         id: 'apisess-02',
+        token: 'demo-tok-alice',
         identityId: 'id-alice',
-        identity: { name: 'alice-macbook' },
+        identity: { id: 'id-alice', name: 'alice-macbook' },
+        authenticatorId: 'auth-2',
         ipAddress: '198.51.100.42',
         authQueries: [],
-        lastActivityAt: now,
-        createdAt: now,
+        lastActivityAt: secsAgo(14),
+        createdAt: secsAgo(900),
+      },
+      {
+        id: 'apisess-03',
+        token: 'demo-tok-bob-1',
+        identityId: 'id-bob',
+        identity: { id: 'id-bob', name: 'bob-thinkpad' },
+        authenticatorId: 'auth-3',
+        ipAddress: '198.51.100.42',
+        authQueries: [],
+        lastActivityAt: secsAgo(22),
+        createdAt: secsAgo(1200),
+      },
+      {
+        id: 'apisess-04',
+        token: 'demo-tok-bob-2',
+        identityId: 'id-bob',
+        identity: { id: 'id-bob', name: 'bob-thinkpad' },
+        authenticatorId: 'auth-3',
+        ipAddress: '203.0.113.194',
+        authQueries: [],
+        lastActivityAt: secsAgo(6),
+        createdAt: secsAgo(45),
+      },
+      {
+        id: 'apisess-05',
+        token: 'demo-tok-carla',
+        identityId: 'id-carla',
+        identity: { id: 'id-carla', name: 'carla-linux' },
+        authenticatorId: 'auth-4',
+        ipAddress: '10.24.8.15',
+        authQueries: [],
+        lastActivityAt: secsAgo(18),
+        createdAt: secsAgo(600),
+      },
+      {
+        id: 'apisess-06',
+        token: 'demo-tok-crm-host',
+        identityId: 'id-crm-host',
+        identity: { id: 'id-crm-host', name: 'crm-prod-01' },
+        authenticatorId: 'auth-5',
+        ipAddress: '10.10.0.21',
+        authQueries: [],
+        lastActivityAt: secsAgo(9),
+        createdAt: secsAgo(3600),
       },
     ],
   };
+}
+
+/** Demo links between router pairs, with per-direction latency in nanoseconds. */
+const DEMO_LINKS: { a: string; b: string; src: number; dst: number; down?: boolean }[] = [
+  { a: 'er-us-east', b: 'tr-core-01', src: 38_000_000, dst: 41_000_000 },
+  { a: 'er-eu-west', b: 'tr-core-01', src: 9_000_000, dst: 11_000_000 },
+  { a: 'er-us-east', b: 'er-eu-west', src: 72_000_000, dst: 76_000_000 },
+  { a: 'er-lab', b: 'tr-core-01', src: 0, dst: 0, down: true },
+];
+
+/**
+ * Fabric API stand-in for the Demo Sandbox, derived from the current demo store so it follows
+ * edits: routers with their online state, a few links with latencies, and one circuit per
+ * Dial session, routed client-side edge router -> (core) -> the hosting terminator's router.
+ */
+export function demoFabric(store: RawDemoStore): { [K in keyof FabricEntities]: FabricEntities[K][] } {
+  const edge = store['edge-routers'] || [];
+  const transit = store['transit-routers'] || [];
+  const routers: FabricRouter[] = [
+    ...edge.map((r) => ({ id: r.id, name: r.name, connected: !!r.isOnline, cost: r.cost, tags: r.tags })),
+    ...transit.map((r) => ({ id: r.id, name: r.name, connected: !!r.isOnline, cost: r.cost, tags: r.tags })),
+  ];
+  const routerName = (id: string) => routers.find((r) => r.id === id)?.name;
+  const linkId = (a: string, b: string) => `link-${[a, b].sort().join('--')}`;
+  const links: FabricLink[] = DEMO_LINKS.filter((l) => routerName(l.a) && routerName(l.b)).map((l) => ({
+    id: linkId(l.a, l.b),
+    sourceRouter: { id: l.a, name: routerName(l.a) },
+    destRouter: { id: l.b, name: routerName(l.b) },
+    state: l.down ? 'Failed' : 'Connected',
+    down: !!l.down,
+    protocol: 'tls',
+    cost: 1,
+    sourceLatency: l.src,
+    destLatency: l.dst,
+  }));
+  const hasLink = (a: string, b: string) => links.some((l) => l.id === linkId(a, b) && !l.down);
+
+  // Clients in Europe (east of 30°W) enter via eu-west, everyone else via us-east.
+  const ingressFor = (identityId: string | undefined) => {
+    const ident = store.identities.find((i) => i.id === identityId);
+    const p = parseGeolocation(ident?.tags?.geolocation);
+    return p && p.lng > -30 ? 'er-eu-west' : 'er-us-east';
+  };
+
+  const circuits: FabricCircuit[] = [];
+  for (const s of store.sessions || []) {
+    if (s.type === 'Bind' || !s.serviceId) continue;
+    const term = (store.terminators || []).find((t) => t.serviceId === s.serviceId);
+    if (!term) continue;
+    const hostId = term.address?.startsWith('hosted:') ? term.address.slice('hosted:'.length) : undefined;
+    const ingress = ingressFor(s.identityId);
+    if (!routerName(ingress)) continue;
+    const egress = term.routerId;
+    let nodes = [ingress];
+    if (egress !== ingress) {
+      nodes =
+        hasLink(ingress, 'tr-core-01') && hasLink('tr-core-01', egress)
+          ? [ingress, 'tr-core-01', egress]
+          : [ingress, egress];
+    }
+    circuits.push({
+      id: `circ-${s.id}`,
+      service: { id: s.serviceId, name: s.service?.name },
+      terminator: { id: term.id },
+      path: {
+        nodes: nodes.map((id) => ({ id, name: routerName(id) })),
+        links: nodes.slice(1).map((n, i) => linkId(nodes[i], n)),
+      },
+      tags: { clientId: s.identityId, ...(hostId ? { hostId } : {}) },
+      createdAt: s.createdAt,
+    });
+  }
+  return { routers, links, circuits };
 }

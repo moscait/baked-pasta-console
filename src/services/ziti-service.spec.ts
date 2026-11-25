@@ -264,4 +264,36 @@ describe('zitiService session handling', () => {
     expect((await freshService()).firstVisit).toBe(true);
     expect((await freshService({ ...signedIn, session: {} })).firstVisit).toBe(false);
   });
+
+  it('aborts remediation before dropping sessions when an authenticator revocation fails', async () => {
+    const svc = await freshService(signedIn);
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes('/authenticators/')) {
+        return jsonResponse(403, { error: { message: 'Forbidden' } });
+      }
+      return new Response(null, { status: 200 });
+    });
+
+    const res = await svc.executeRemediationSteps([
+      { method: 'DELETE', path: 'authenticators/a-1', collection: 'authenticators', targetId: 'a-1', reason: 'revoke' },
+      { method: 'DELETE', path: 'api-sessions/s-1', collection: 'api-sessions', targetId: 's-1', reason: 'drop' },
+    ]);
+
+    expect(res.executed).toBe(0);
+    expect(res.failures).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('notifies only policy listeners when concurrency policy changes, avoiding full data reloads', async () => {
+    const svc = await freshService(signedIn);
+    const dataSubscriber = vi.fn();
+    const policySubscriber = vi.fn();
+    svc.subscribe(dataSubscriber);
+    svc.subscribePolicy(policySubscriber);
+
+    svc.saveConcurrencyPolicy({ activeWithinSeconds: 180 });
+    expect(dataSubscriber).not.toHaveBeenCalled();
+    expect(policySubscriber).toHaveBeenCalledTimes(1);
+    expect(svc.getConcurrencyPolicy().activeWithinSeconds).toBe(180);
+  });
 });
