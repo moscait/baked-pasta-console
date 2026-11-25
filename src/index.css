@@ -508,3 +508,118 @@ dialog::backdrop {
   border: 1px solid var(--ac-dial);
   box-shadow: var(--ac-shadow);
 }
+
+/* ------------------------------------------------------------------ Network Map (Leaflet) */
+.bpc-map {
+  background: var(--ac-surface-2);
+  font: inherit;
+}
+.bpc-map.bpc-map-placing,
+.bpc-map.bpc-map-placing .leaflet-interactive {
+  cursor: crosshair;
+}
+.bpc-map .leaflet-tooltip {
+  background: var(--ac-surface);
+  color: var(--ac-ink);
+  border-color: var(--ac-line);
+  font-size: 11.5px;
+}
+.bpc-map-marker {
+  background: none;
+  border: none;
+}
+.bpc-pin {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  font: 700 11px/1 var(--ac-mono);
+  color: #fff;
+  border: 2px solid var(--ac-surface);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+  background: var(--ac-muted);
+}
+.bpc-pin.small {
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
+  border-width: 1px;
+  box-shadow: none;
+}
+.bpc-pin.edge-router.on {
+  background: var(--ac-router);
+}
+.bpc-pin.transit-router.on {
+  background: var(--ac-ink);
+  color: var(--ac-surface);
+}
+.bpc-pin.identity.on {
+  background: var(--ac-dial);
+}
+.bpc-pin.off {
+  background: var(--ac-surface-2);
+  color: var(--ac-muted);
+  border-color: var(--ac-bad);
+}
+.bpc-pin.hl {
+  outline: 3px solid var(--ac-dial);
+  outline-offset: 1px;
+}
+.bpc-pin.edited {
+  border-style: dashed;
+  border-color: var(--ac-pending);
+}
+.bpc-pin-count {
+  position: absolute;
+  top: -7px;
+  right: -9px;
+  min-width: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  font: 700 9.5px/15px var(--ac-mono);
+  text-align: center;
+  color: #fff;
+  background: var(--ac-dial);
+}
+/* SVG stroke attributes cannot resolve var(); CSS properties override them. */
+.bpc-link.good {
+  stroke: var(--ac-ok);
+}
+.bpc-link.warn {
+  stroke: var(--ac-pending);
+}
+.bpc-link.bad {
+  stroke: var(--ac-bad);
+}
+.bpc-link.unknown {
+  stroke: var(--ac-muted);
+}
+.bpc-circuit {
+  stroke: var(--ac-bind);
+}
+.bpc-circuit-halo {
+  stroke: var(--ac-surface);
+}
+.bpc-circuit.flow {
+  animation: bpc-circuit-flow 1.1s linear infinite;
+}
+@keyframes bpc-circuit-flow {
+  to {
+    stroke-dashoffset: -32;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bpc-circuit.flow {
+    animation: none;
+  }
+}
+.bpc-legend-line {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+}
+.bpc-legend-circuit {
+  background: repeating-linear-gradient(90deg, var(--ac-bind) 0 5px, transparent 5px 8px);
+}

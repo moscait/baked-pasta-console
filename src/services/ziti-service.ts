@@ -16,8 +16,9 @@ import {
   serviceBody,
 } from '../features/access-canvas/access-canvas.logic';
 import { BrowserLayoutStore, LayoutStore, layoutStorageKey } from '../features/access-canvas/canvas-layout.store';
-import type { ApiEntities, ApiEnvelope, ApiWriteBody, Collection, ConfigType } from './api-types';
-import { RawDemoStore, createInitialDemoStore } from './demo-store';
+import type { ApiEntities, ApiEnvelope, ApiWriteBody, Collection, ConfigType, Identity } from './api-types';
+import { RawDemoStore, createInitialDemoStore, demoFabric } from './demo-store';
+import type { FabricEntities } from '../features/network-map/network-map.logic';
 
 export type { RawDemoStore } from './demo-store';
 export { createInitialDemoStore } from './demo-store';
@@ -606,12 +607,18 @@ class ZitiServiceImpl {
    * session, and on 401 clears the session exactly once, so pages that reload on `notify()`
    * cannot fall into a 401 -> logout -> notify -> reload -> 401 loop.
    */
-  private async request<T>(method: string, path: string, failure: string, body?: ApiWriteBody): Promise<T> {
+  private async request<T>(
+    method: string,
+    path: string,
+    failure: string,
+    body?: ApiWriteBody,
+    api: 'edge/management/v1' | 'fabric/v1' = 'edge/management/v1',
+  ): Promise<T> {
     if (!this.isAuthenticated()) throw new Error('Not signed in to a controller.');
     if (this.canRefresh() && this.accessTokenExpiringSoon()) await this.refreshSession();
 
     const send = () =>
-      fetch(`${this.controllerUrl()}/edge/management/v1/${path}`, {
+      fetch(`${this.controllerUrl()}/${api}/${path}`, {
         method,
         headers: this.authHeaders(),
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -672,15 +679,7 @@ class ZitiServiceImpl {
       };
       if (collection === 'identities') {
         created.authenticators = {};
-        created.enrollment = {
-          ott: {
-            id: `enr-${id}`,
-            jwt: `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(
-              JSON.stringify({ sub: id, name, iss: this.controllerUrl(), exp: 1999999999 }),
-            )}.demo-jwt-sig`,
-            expiresAt: new Date(Date.now() + 86400000).toISOString(),
-          },
-        };
+        created.enrollment = { ott: this.demoOttToken(id, name || id, new Date(Date.now() + 86400000)) };
         created.hasEdgeRouterConnection = false;
       }
       if (collection === 'edge-routers') {
@@ -729,6 +728,128 @@ class ZitiServiceImpl {
     }
 
     await this.request('DELETE', `${collection}/${encodeURIComponent(id)}`, `DELETE ${collection}/${id} failed`);
+  }
+
+  // ------------------------------------------------------------------ fabric API (circuits, links, routers)
+
+  /**
+   * Lists a fabric management collection (`/fabric/v1/<collection>`), paging like `list`.
+   * The fabric API is served by the same controller with the same session; it can be
+   * disabled or restricted, so callers should treat a failure as "live data unavailable".
+   */
+  async listFabric<K extends keyof FabricEntities>(collection: K): Promise<FabricEntities[K][]> {
+    if (this.settings.demoMode) return clone(demoFabric(this.getDemoStore())[collection]) as FabricEntities[K][];
+    const out: FabricEntities[K][] = [];
+    const limit = 500;
+    for (let page = 0; page < 200; page++) {
+      const json = await this.request<ApiEnvelope<FabricEntities[K][]> | null>(
+        'GET',
+        `${collection}?limit=${limit}&offset=${page * limit}`,
+        `Failed to load fabric ${collection}`,
+        undefined,
+        'fabric/v1',
+      );
+      const rows = json?.data || [];
+      out.push(...rows);
+      const total = json?.meta?.pagination?.totalCount;
+      if (rows.length < limit || (typeof total === 'number' && out.length >= total)) return out;
+    }
+    throw new Error(`Stopped loading fabric ${collection}; pagination did not terminate.`);
+  }
+
+  /**
+   * Sets or clears an identity's or router's `geolocation` tag ("lat,lng"), the same tag the
+   * upstream console's Geolocate map reads. Tags are replaced as a whole map, so the entity's
+   * other tags are sent back unchanged.
+   */
+  async saveGeolocation(
+    collection: 'identities' | 'edge-routers' | 'transit-routers',
+    entity: { id: string; tags?: Record<string, unknown> },
+    geolocation: string | null,
+  ): Promise<void> {
+    const tags: Record<string, unknown> = { ...(entity.tags || {}) };
+    if (geolocation) tags.geolocation = geolocation;
+    else delete tags.geolocation;
+    // An empty tags object is ignored by the controller's PATCH, which would leave the old
+    // location in place; the upstream console sends a placeholder tag for the same reason.
+    if (!Object.keys(tags).length) tags.temp = 'empty';
+    await this.patch(collection, entity.id, { tags });
+  }
+
+  // ------------------------------------------------------------------ enrollment lifecycle
+
+  private demoOttToken(identityId: string, name: string, expiresAt: Date) {
+    const nonce = Math.random().toString(36).slice(2, 9);
+    return {
+      id: `enr-${identityId}-${nonce}`,
+      jwt: `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(
+        JSON.stringify({ sub: identityId, name, iss: this.controllerUrl(), jti: nonce, exp: Math.floor(expiresAt.getTime() / 1000) }),
+      )}.demo-jwt-sig`,
+      expiresAt: expiresAt.toISOString(),
+    };
+  }
+
+  /**
+   * Revokes an enrolled identity's authenticator and issues a new one-time enrollment token
+   * (`POST authenticators/{id}/re-enroll`). The device's current certificate or password stops
+   * working; it must enroll again with the new token before `expiresAt`.
+   */
+  async resetEnrollment(identity: Identity, expiresAt: Date): Promise<void> {
+    const authId = identity.authenticators?.cert?.id || identity.authenticators?.updb?.id;
+    if (!authId) throw new Error(`${identity.name} has no authenticator to reset.`);
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      const ident = store.identities.find((i) => i.id === identity.id);
+      if (ident) {
+        ident.authenticators = {};
+        ident.enrollment = { ott: this.demoOttToken(ident.id, ident.name, expiresAt) };
+        ident.hasEdgeRouterConnection = false;
+        this.saveDemoStore(store);
+      }
+      return;
+    }
+    await this.request('POST', `authenticators/${encodeURIComponent(authId)}/re-enroll`, 'Reset enrollment failed', {
+      expiresAt: expiresAt.toISOString(),
+    });
+    this.notify();
+  }
+
+  /**
+   * Replaces a pending (not yet used) enrollment token with a new one that expires at
+   * `expiresAt` (`POST enrollments/{id}/refresh`). The old JWT stops working.
+   */
+  async reissueEnrollment(identity: Identity, expiresAt: Date): Promise<void> {
+    const e = identity.enrollment;
+    const enrollmentId = e?.ott?.id || e?.ottca?.id || e?.updb?.id || e?.ca?.id;
+    if (!enrollmentId) throw new Error(`${identity.name} has no pending enrollment to reissue.`);
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      const ident = store.identities.find((i) => i.id === identity.id);
+      if (ident) {
+        ident.enrollment = { ott: this.demoOttToken(ident.id, ident.name, expiresAt) };
+        this.saveDemoStore(store);
+      }
+      return;
+    }
+    await this.request('POST', `enrollments/${encodeURIComponent(enrollmentId)}/refresh`, 'Reissue enrollment failed', {
+      expiresAt: expiresAt.toISOString(),
+    });
+    this.notify();
+  }
+
+  /** Removes an identity's MFA (TOTP) enrollment so the user can set it up again (`DELETE identities/{id}/mfa`). */
+  async resetMfa(identity: Identity): Promise<void> {
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      const ident = store.identities.find((i) => i.id === identity.id);
+      if (ident) {
+        ident.isMfaEnabled = false;
+        this.saveDemoStore(store);
+      }
+      return;
+    }
+    await this.request('DELETE', `identities/${encodeURIComponent(identity.id)}/mfa`, 'Reset MFA failed');
+    this.notify();
   }
 
   /** Simulates enrolling an identity in Demo Mode so the user can see live status updates! */

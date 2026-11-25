@@ -3,6 +3,7 @@ import type { EdgeRouter, TransitRouter } from '../services/api-types';
 import { zitiService } from '../services/ziti-service';
 import { DataTable, ColumnDef } from '../components/DataTable';
 import { ModalDialog } from '../components/ModalDialog';
+import { useCreateIntent } from '../components/useCreateIntent';
 
 export const RoutersPage: React.FC<{
   initialTab?: 'edge-routers' | 'transit-routers';
@@ -20,6 +21,17 @@ export const RoutersPage: React.FC<{
   useEffect(() => {
     setTab(initialTab);
   }, [initialTab]);
+
+  const openNewEdgeRouter = () => {
+    setTab('edge-routers');
+    setEditing(null);
+    setName('');
+    setAttrsText('public');
+    setCost(0);
+    setModalOpen(true);
+  };
+
+  useCreateIntent({ 'edge-router': openNewEdgeRouter });
 
   const load = useCallback(async () => {
     try {
@@ -158,13 +170,7 @@ export const RoutersPage: React.FC<{
           columns={edgeColumns}
           headerTabs={headerTabs}
           createLabel="New Edge Router"
-          onCreate={() => {
-            setEditing(null);
-            setName('');
-            setAttrsText('public');
-            setCost(0);
-            setModalOpen(true);
-          }}
+          onCreate={openNewEdgeRouter}
           onEdit={(row) => {
             setEditing(row);
             setName(row.name);

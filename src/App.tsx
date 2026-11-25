@@ -30,16 +30,26 @@ const AuthenticationPage = lazy(() =>
 );
 const SessionsPage = lazy(() => import('./pages/SessionsPage').then((m) => ({ default: m.SessionsPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })));
+const AttributesPage = lazy(() => import('./pages/AttributesPage').then((m) => ({ default: m.AttributesPage })));
+const NetworkMapPage = lazy(() => import('./pages/NetworkMapPage').then((m) => ({ default: m.NetworkMapPage })));
+const ConfigBuilderPage = lazy(() =>
+  import('./pages/ConfigBuilderPage').then((m) => ({ default: m.ConfigBuilderPage })),
+);
+import { QUICK_ADD_ITEMS, quickAddHref } from './components/useCreateIntent';
 import {
   Activity,
+  FileCode2,
+  Globe2,
   KeyRound,
   LayoutDashboard,
   LogOut,
   Network,
+  Plus,
   Router as RouterIcon,
   Server,
   Settings,
   ShieldCheck,
+  Tags,
   UserCheck,
   Users,
   X,
@@ -145,6 +155,13 @@ const AppShell: React.FC = () => {
           route: '/dashboard',
           icon: LayoutDashboard,
         },
+        {
+          label: 'Network Map',
+          hint: 'Routers and identities on a world map, link latency, and live circuits from client to host.',
+          route: '/network-map',
+          icon: Globe2,
+          match: ['/network-map', '/geolocate'],
+        },
       ],
     },
     {
@@ -190,6 +207,12 @@ const AppShell: React.FC = () => {
           icon: UserCheck,
           match: ['/posture-checks'],
         },
+        {
+          label: 'Attributes',
+          hint: 'Every #attribute: who carries it, which policies select it, and policies that select nothing.',
+          route: '/attributes',
+          icon: Tags,
+        },
       ],
     },
     {
@@ -208,6 +231,12 @@ const AppShell: React.FC = () => {
           route: '/sessions',
           icon: Activity,
           match: ['/sessions', '/api-sessions'],
+        },
+        {
+          label: 'Config Builder',
+          hint: 'Build or edit controller and router YAML config files with validation and a live preview.',
+          route: '/config-builder',
+          icon: FileCode2,
         },
         {
           label: 'Settings',
@@ -243,6 +272,8 @@ const AppShell: React.FC = () => {
               </div>
             </Link>
           </div>
+
+          <QuickAdd />
 
           {/* Nav Links */}
           <nav className="space-y-4" aria-label="Main Navigation">
@@ -362,6 +393,10 @@ const AppShell: React.FC = () => {
           />
           <Route path="/sessions/*" element={<SessionsPage initialTab="sessions" onToast={addToast} />} />
           <Route path="/api-sessions/*" element={<SessionsPage initialTab="api-sessions" onToast={addToast} />} />
+          <Route path="/network-map" element={<NetworkMapPage onToast={addToast} />} />
+          <Route path="/geolocate" element={<Navigate to="/network-map" replace />} />
+          <Route path="/attributes" element={<AttributesPage onToast={addToast} />} />
+          <Route path="/config-builder" element={<ConfigBuilderPage />} />
           <Route path="/settings/*" element={<SettingsPage onToast={addToast} />} />
           <Route path="/servers/*" element={<SettingsPage onToast={addToast} />} />
           <Route path="/profile/*" element={<SettingsPage onToast={addToast} />} />
@@ -372,6 +407,64 @@ const AppShell: React.FC = () => {
       </main>
 
       <ToastStack toasts={toasts} onDismiss={(id) => setToasts((p) => p.filter((x) => x.id !== id))} />
+    </div>
+  );
+};
+
+/** "Quick add" menu: jumps to a page and opens its create dialog (`?new=<intent>`). */
+const QuickAdd: React.FC = () => {
+  const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+  const menuRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const onDown = (e: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={menuRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-[var(--ac-dial)] text-white text-xs font-semibold shadow-sm hover:opacity-95 cursor-pointer"
+      >
+        <Plus className="w-4 h-4" />
+        <span>Quick add</span>
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute left-0 right-0 lg:right-auto lg:w-72 top-full mt-1.5 z-50 p-1.5 rounded-xl bg-[var(--ac-surface)] border border-[var(--ac-line)] shadow-2xl text-xs"
+        >
+          {QUICK_ADD_ITEMS.map((item) => (
+            <button
+              key={item.intent}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                navigate(quickAddHref(item));
+              }}
+              className="w-full text-left px-3 py-2 rounded-lg hover:bg-[var(--ac-surface-2)] cursor-pointer"
+            >
+              <span className="block font-semibold text-[var(--ac-ink)]">{item.label}</span>
+              <span className="block text-[11px] text-[var(--ac-muted)]">{item.hint}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

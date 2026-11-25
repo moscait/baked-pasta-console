@@ -3,6 +3,7 @@ import type { EdgeRouterPolicy, ServiceEdgeRouterPolicy, ServicePolicy } from '.
 import { zitiService } from '../services/ziti-service';
 import { DataTable, ColumnDef } from '../components/DataTable';
 import { ModalDialog } from '../components/ModalDialog';
+import { useCreateIntent } from '../components/useCreateIntent';
 
 type PolicyTab = 'service-policies' | 'edge-router-policies' | 'service-edge-router-policies';
 
@@ -25,6 +26,17 @@ export const PoliciesPage: React.FC<{
   useEffect(() => {
     setTab(initialTab);
   }, [initialTab]);
+
+  const openNewServicePolicy = () => {
+    setTab('service-policies');
+    setName('');
+    setType('Dial');
+    setLeftRoles('#employees');
+    setRightRoles('#web');
+    setModalOpen(true);
+  };
+
+  useCreateIntent({ 'service-policy': openNewServicePolicy });
 
   const load = useCallback(async () => {
     try {
@@ -191,13 +203,7 @@ export const PoliciesPage: React.FC<{
           columns={spColumns}
           headerTabs={headerTabs}
           createLabel="New Service Policy"
-          onCreate={() => {
-            setName('');
-            setType('Dial');
-            setLeftRoles('#employees');
-            setRightRoles('#web');
-            setModalOpen(true);
-          }}
+          onCreate={openNewServicePolicy}
           onDelete={async (row) => {
             await zitiService.remove('service-policies', row.id);
             onToast('info', 'Service policy deleted', row.name);

@@ -3,6 +3,7 @@ import type { Config, ConfigType, Service, Terminator } from '../services/api-ty
 import { revertsOf, zitiService } from '../services/ziti-service';
 import { DataTable, ColumnDef } from '../components/DataTable';
 import { ModalDialog } from '../components/ModalDialog';
+import { useCreateIntent } from '../components/useCreateIntent';
 import { AccessWizard } from '../features/access-canvas/AccessWizard';
 import { AcModel } from '../features/access-canvas/access-canvas.logic';
 import { ConfigPicker } from '../features/services/ConfigPicker';
@@ -45,6 +46,17 @@ export const ServicesPage: React.FC<{
   useEffect(() => {
     setTab(initialTab);
   }, [initialTab]);
+
+  const openNewService = () => {
+    setTab('services');
+    setEditingSvc(null);
+    setSvcName('');
+    setSvcAttrs('');
+    setSvcConfigs([]);
+    setSvcModal(true);
+  };
+
+  useCreateIntent({ service: openNewService, wizard: () => setWizardOpen(true) });
 
   const load = useCallback(async () => {
     try {
@@ -323,13 +335,7 @@ export const ServicesPage: React.FC<{
           columns={serviceColumns}
           headerTabs={headerTabs}
           createLabel="New Service"
-          onCreate={() => {
-            setEditingSvc(null);
-            setSvcName('');
-            setSvcAttrs('');
-            setSvcConfigs([]);
-            setSvcModal(true);
-          }}
+          onCreate={openNewService}
           onEdit={(row) => {
             setEditingSvc(row);
             setSvcName(row.name);

@@ -1,4 +1,6 @@
 import type { ApiEntities, Collection } from './api-types';
+import type { FabricCircuit, FabricEntities, FabricLink, FabricRouter } from '../features/network-map/network-map.logic';
+import { parseGeolocation } from '../features/network-map/network-map.logic';
 
 /** In-browser stand-in for the controller's data, used by the Interactive Demo Sandbox. */
 export type RawDemoStore = { [K in Collection]: ApiEntities[K][] };
@@ -100,6 +102,7 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'id-alice',
+        tags: { geolocation: '40.71280,-74.00600' },
         name: 'alice-macbook',
         typeId: 'Default',
         type: { name: 'Default' },
@@ -113,6 +116,7 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'id-bob',
+        tags: { geolocation: '51.50740,-0.12780' },
         name: 'bob-thinkpad',
         typeId: 'Default',
         type: { name: 'Default' },
@@ -126,6 +130,7 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'id-carla',
+        tags: { geolocation: '52.52000,13.40500' },
         name: 'carla-linux',
         typeId: 'Default',
         type: { name: 'Default' },
@@ -157,6 +162,7 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'id-crm-host',
+        tags: { geolocation: '39.04380,-77.48740' },
         name: 'crm-prod-01',
         typeId: 'Default',
         type: { name: 'Default' },
@@ -170,6 +176,7 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'id-devbox-host',
+        tags: { geolocation: '41.87810,-87.62980' },
         name: 'devbox',
         typeId: 'Default',
         type: { name: 'Default' },
@@ -183,6 +190,7 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'id-billing-host',
+        tags: { geolocation: '50.11090,8.68210' },
         name: 'billing-db',
         typeId: 'Default',
         type: { name: 'Default' },
@@ -254,6 +262,7 @@ export function createInitialDemoStore(): RawDemoStore {
     'edge-routers': [
       {
         id: 'er-us-east',
+        tags: { geolocation: '38.94450,-77.45580' },
         name: 'us-east-edge-01',
         roleAttributes: ['public', 'us-east'],
         isOnline: true,
@@ -265,6 +274,7 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'er-eu-west',
+        tags: { geolocation: '53.34980,-6.26030' },
         name: 'eu-west-edge-01',
         roleAttributes: ['public', 'eu-west'],
         isOnline: true,
@@ -289,6 +299,7 @@ export function createInitialDemoStore(): RawDemoStore {
     'transit-routers': [
       {
         id: 'tr-core-01',
+        tags: { geolocation: '52.36760,4.90410' },
         name: 'core-fabric-transit-01',
         isOnline: true,
         isVerified: true,
@@ -514,4 +525,77 @@ export function createInitialDemoStore(): RawDemoStore {
       },
     ],
   };
+}
+
+/** Demo links between router pairs, with per-direction latency in nanoseconds. */
+const DEMO_LINKS: { a: string; b: string; src: number; dst: number; down?: boolean }[] = [
+  { a: 'er-us-east', b: 'tr-core-01', src: 38_000_000, dst: 41_000_000 },
+  { a: 'er-eu-west', b: 'tr-core-01', src: 9_000_000, dst: 11_000_000 },
+  { a: 'er-us-east', b: 'er-eu-west', src: 72_000_000, dst: 76_000_000 },
+  { a: 'er-lab', b: 'tr-core-01', src: 0, dst: 0, down: true },
+];
+
+/**
+ * Fabric API stand-in for the Demo Sandbox, derived from the current demo store so it follows
+ * edits: routers with their online state, a few links with latencies, and one circuit per
+ * Dial session, routed client-side edge router -> (core) -> the hosting terminator's router.
+ */
+export function demoFabric(store: RawDemoStore): { [K in keyof FabricEntities]: FabricEntities[K][] } {
+  const edge = store['edge-routers'] || [];
+  const transit = store['transit-routers'] || [];
+  const routers: FabricRouter[] = [
+    ...edge.map((r) => ({ id: r.id, name: r.name, connected: !!r.isOnline, cost: r.cost, tags: r.tags })),
+    ...transit.map((r) => ({ id: r.id, name: r.name, connected: !!r.isOnline, cost: r.cost, tags: r.tags })),
+  ];
+  const routerName = (id: string) => routers.find((r) => r.id === id)?.name;
+  const linkId = (a: string, b: string) => `link-${[a, b].sort().join('--')}`;
+  const links: FabricLink[] = DEMO_LINKS.filter((l) => routerName(l.a) && routerName(l.b)).map((l) => ({
+    id: linkId(l.a, l.b),
+    sourceRouter: { id: l.a, name: routerName(l.a) },
+    destRouter: { id: l.b, name: routerName(l.b) },
+    state: l.down ? 'Failed' : 'Connected',
+    down: !!l.down,
+    protocol: 'tls',
+    cost: 1,
+    sourceLatency: l.src,
+    destLatency: l.dst,
+  }));
+  const hasLink = (a: string, b: string) => links.some((l) => l.id === linkId(a, b) && !l.down);
+
+  // Clients in Europe (east of 30°W) enter via eu-west, everyone else via us-east.
+  const ingressFor = (identityId: string | undefined) => {
+    const ident = store.identities.find((i) => i.id === identityId);
+    const p = parseGeolocation(ident?.tags?.geolocation);
+    return p && p.lng > -30 ? 'er-eu-west' : 'er-us-east';
+  };
+
+  const circuits: FabricCircuit[] = [];
+  for (const s of store.sessions || []) {
+    if (s.type === 'Bind' || !s.serviceId) continue;
+    const term = (store.terminators || []).find((t) => t.serviceId === s.serviceId);
+    if (!term) continue;
+    const hostId = term.address?.startsWith('hosted:') ? term.address.slice('hosted:'.length) : undefined;
+    const ingress = ingressFor(s.identityId);
+    if (!routerName(ingress)) continue;
+    const egress = term.routerId;
+    let nodes = [ingress];
+    if (egress !== ingress) {
+      nodes =
+        hasLink(ingress, 'tr-core-01') && hasLink('tr-core-01', egress)
+          ? [ingress, 'tr-core-01', egress]
+          : [ingress, egress];
+    }
+    circuits.push({
+      id: `circ-${s.id}`,
+      service: { id: s.serviceId, name: s.service?.name },
+      terminator: { id: term.id },
+      path: {
+        nodes: nodes.map((id) => ({ id, name: routerName(id) })),
+        links: nodes.slice(1).map((n, i) => linkId(nodes[i], n)),
+      },
+      tags: { clientId: s.identityId, ...(hostId ? { hostId } : {}) },
+      createdAt: s.createdAt,
+    });
+  }
+  return { routers, links, circuits };
 }
