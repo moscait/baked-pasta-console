@@ -6,9 +6,14 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
-      # Batch routine minor/patch updates into one PR; majors arrive separately for review.
+      # Batch routine minor/patch updates into one PR.
       minor-and-patch:
         update-types: [minor, patch]
+      # All majors in one PR too, so plugins that must move together (e.g. eslint and
+      # eslint-plugin-react-hooks) are tested together. Review it before merging: majors can
+      # need code changes, and `npm run check` in CI is the gate.
+      majors:
+        update-types: [major]
 
   - package-ecosystem: github-actions
     directory: /
