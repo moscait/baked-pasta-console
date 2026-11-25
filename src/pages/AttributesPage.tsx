@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { useServiceLoad } from '../components/state-hooks';
 import { AlertTriangle, Tag } from 'lucide-react';
 import { zitiService } from '../services/ziti-service';
 import { DataTable, ColumnDef } from '../components/DataTable';
@@ -31,18 +32,18 @@ export const AttributesPage: React.FC<{
   const [detail, setDetail] = useState<AttributeRow | null>(null);
   const [issuesOnly, setIssuesOnly] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const [identities, services, edgeRouters, postureChecks, servicePolicies, edgeRouterPolicies, serps] =
-        await Promise.all([
-          zitiService.list('identities'),
-          zitiService.list('services'),
-          zitiService.list('edge-routers'),
-          zitiService.list('posture-checks'),
-          zitiService.list('service-policies'),
-          zitiService.list('edge-router-policies'),
-          zitiService.list('service-edge-router-policies'),
-        ]);
+  useServiceLoad(
+    () =>
+      Promise.all([
+        zitiService.list('identities'),
+        zitiService.list('services'),
+        zitiService.list('edge-routers'),
+        zitiService.list('posture-checks'),
+        zitiService.list('service-policies'),
+        zitiService.list('edge-router-policies'),
+        zitiService.list('service-edge-router-policies'),
+      ]),
+    ([identities, services, edgeRouters, postureChecks, servicePolicies, edgeRouterPolicies, serps]) =>
       setInput({
         identities,
         services,
@@ -51,16 +52,9 @@ export const AttributesPage: React.FC<{
         servicePolicies,
         edgeRouterPolicies,
         serviceEdgeRouterPolicies: serps,
-      });
-    } catch (err) {
-      onToast('error', 'Failed to load attributes', zitiService.errorText(err));
-    }
-  }, [onToast]);
-
-  useEffect(() => {
-    load();
-    return zitiService.subscribe(load);
-  }, [load]);
+      }),
+    (err) => onToast('error', 'Failed to load attributes', zitiService.errorText(err)),
+  );
 
   const rows = useMemo(() => buildAttributeIndex(input), [input]);
   const danglingCount = rows.filter((r) => r.dangling.length > 0).length;

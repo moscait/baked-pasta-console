@@ -6,6 +6,7 @@ import { zitiService } from '../services/ziti-service';
 import { DataTable, ColumnDef } from '../components/DataTable';
 import { ModalDialog } from '../components/ModalDialog';
 import { useCreateIntent } from '../components/useCreateIntent';
+import { useServiceLoad } from '../components/state-hooks';
 import { downloadText } from '../components/csv';
 import { ConfigOverridesDialog, IdentityFormDialog } from '../features/identities/IdentityDialogs';
 import {
@@ -30,6 +31,15 @@ const toLocalInput = (d: Date) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
+/** A `datetime-local` value `ms` from now. */
+const localInputFromNow = (ms: number) => toLocalInput(new Date(Date.now() + ms));
+
+const MINUTE = 60_000;
+const DAY = 86_400_000;
+
+/** Token expiries must leave the device at least a minute to enroll. */
+const isUsableExpiry = (d: Date) => !Number.isNaN(d.getTime()) && d.getTime() > Date.now() + MINUTE;
+
 export const IdentitiesPage: React.FC<{
   onToast: (level: 'info' | 'success' | 'warning' | 'error', title: string, detail?: string) => void;
 }> = ({ onToast }) => {
@@ -41,29 +51,29 @@ export const IdentitiesPage: React.FC<{
   const [formFor, setFormFor] = useState<Identity | null | undefined>(undefined);
   const [overridesFor, setOverridesFor] = useState<Identity | null>(null);
 
-  const [tokenModal, setTokenModal] = useState<Identity | null>(null);
+  // The token dialog follows the identity by id so it always shows its current token.
+  const [tokenForId, setTokenForId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const [credTarget, setCredTarget] = useState<Identity | null>(null);
   const [credExpiry, setCredExpiry] = useState('');
+  const [credMinExpiry, setCredMinExpiry] = useState('');
   const [credBusy, setCredBusy] = useState(false);
   const [credError, setCredError] = useState('');
   const [confirmReset, setConfirmReset] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const [list, apiSess] = await Promise.all([
-        zitiService.list('identities'),
-        zitiService.list('api-sessions').catch(() => []),
-      ]);
+  const load = useServiceLoad(
+    () => Promise.all([zitiService.list('identities'), zitiService.list('api-sessions').catch(() => [])]),
+    ([list, apiSess]) => {
       setRows(list);
       setApiSessions(apiSess);
-      return list;
-    } catch (err) {
-      onToast('error', 'Failed to load identities', zitiService.errorText(err));
-      return null;
-    }
-  }, [onToast]);
+    },
+    (err) => onToast('error', 'Failed to load identities', zitiService.errorText(err)),
+  );
+
+  useEffect(() => zitiService.subscribePolicy(() => setPolicy(zitiService.getConcurrencyPolicy())), []);
+
+  const tokenModal = tokenForId ? rows.find((r) => r.id === tokenForId) || null : null;
 
   const sessionReport = useMemo(
     () =>
@@ -79,7 +89,8 @@ export const IdentitiesPage: React.FC<{
 
   const openCredentials = (row: Identity) => {
     setCredTarget(row);
-    setCredExpiry(toLocalInput(new Date(Date.now() + 2 * 86400000)));
+    setCredExpiry(localInputFromNow(2 * DAY));
+    setCredMinExpiry(localInputFromNow(MINUTE));
     setCredError('');
     setConfirmReset(false);
   };
@@ -88,7 +99,7 @@ export const IdentitiesPage: React.FC<{
   const runCredentialAction = async (kind: 'reset' | 'reissue' | 'mfa') => {
     if (!credTarget) return;
     const expiresAt = new Date(credExpiry);
-    if (kind !== 'mfa' && (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now() + 60000)) {
+    if (kind !== 'mfa' && !isUsableExpiry(expiresAt)) {
       setCredError('Pick an expiry at least a minute in the future.');
       return;
     }
@@ -110,24 +121,14 @@ export const IdentitiesPage: React.FC<{
         kind === 'reset' ? 'Enrollment reset' : 'Enrollment token reissued',
         `${target.name}: new token expires ${expiresAt.toLocaleString()}.`,
       );
-      const fresh = (await load())?.find((i) => i.id === target.id);
-      if (fresh && getJwt(fresh)) setTokenModal(fresh);
+      await load();
+      setTokenForId(target.id);
     } catch (err) {
       setCredError(zitiService.errorText(err));
     } finally {
       setCredBusy(false);
     }
   };
-
-  useEffect(() => {
-    load();
-    const unsubData = zitiService.subscribe(load);
-    const unsubPolicy = zitiService.subscribePolicy(() => setPolicy(zitiService.getConcurrencyPolicy()));
-    return () => {
-      unsubData();
-      unsubPolicy();
-    };
-  }, [load]);
 
   const openCreate = () => setFormFor(null);
 
@@ -210,7 +211,7 @@ export const IdentitiesPage: React.FC<{
         ) : (
           <button
             type="button"
-            onClick={() => setTokenModal(row)}
+            onClick={() => setTokenForId(row.id)}
             className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[var(--ac-pending-soft)] text-[var(--ac-pending)] border border-[var(--ac-pending)]/40 text-xs font-medium cursor-pointer hover:opacity-90"
           >
             <QrCode className="w-3.5 h-3.5" />
@@ -303,7 +304,7 @@ export const IdentitiesPage: React.FC<{
             {getJwt(row) && (
               <button
                 type="button"
-                onClick={() => setTokenModal(row)}
+                onClick={() => setTokenForId(row.id)}
                 title="Enrollment JWT & QR Code"
                 className="p-1.5 rounded-lg border border-[var(--ac-dial)]/40 bg-[var(--ac-dial-soft)] text-[var(--ac-dial)] cursor-pointer"
               >
@@ -349,7 +350,7 @@ export const IdentitiesPage: React.FC<{
                       <input
                         type="datetime-local"
                         value={credExpiry}
-                        min={toLocalInput(new Date(Date.now() + 60000))}
+                        min={credMinExpiry}
                         onChange={(e) => setCredExpiry(e.target.value)}
                         className="w-full px-3 py-1.5 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)] font-mono"
                       />
@@ -448,14 +449,14 @@ export const IdentitiesPage: React.FC<{
         <IdentityFormDialog editing={formFor} onClose={() => setFormFor(undefined)} onSaved={toastSuccess} />
       )}
       {overridesFor && (
-        <ConfigOverridesDialog identity={overridesFor} onClose={() => setOverridesFor(null)} onChanged={toastSuccess} />
+        <ConfigOverridesDialog key={overridesFor.id} identity={overridesFor} onClose={() => setOverridesFor(null)} onChanged={toastSuccess} />
       )}
 
       {/* Enrollment Token & QR Code Modal */}
       {tokenModal && (
         <ModalDialog
           open={!!tokenModal}
-          onClose={() => setTokenModal(null)}
+          onClose={() => setTokenForId(null)}
           title={`Enroll Identity: ${tokenModal.name}`}
         >
           <div className="space-y-5 text-xs">
@@ -498,7 +499,7 @@ export const IdentitiesPage: React.FC<{
                       onClick={async () => {
                         await zitiService.simulateEnrollDemoIdentity(tokenModal.id);
                         onToast('success', 'Enrolled!', `${tokenModal.name} is now enrolled and online.`);
-                        setTokenModal(null);
+                        setTokenForId(null);
                       }}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--ac-ok-soft)] text-[var(--ac-ok)] border border-[var(--ac-ok)]/40 font-semibold cursor-pointer"
                     >

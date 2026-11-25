@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useServiceLoad } from '../components/state-hooks';
 import type { PostureCheck } from '../services/api-types';
 import { zitiService } from '../services/ziti-service';
 import { DataTable, ColumnDef } from '../components/DataTable';
@@ -23,18 +24,11 @@ export const PostureChecksPage: React.FC<{
 
   useCreateIntent({ 'posture-check': openNewPostureCheck });
 
-  const load = useCallback(async () => {
-    try {
-      setRows(await zitiService.list('posture-checks'));
-    } catch (err) {
-      onToast('error', 'Load failed', zitiService.errorText(err));
-    }
-  }, [onToast]);
-
-  useEffect(() => {
-    load();
-    return zitiService.subscribe(load);
-  }, [load]);
+  const load = useServiceLoad(
+    () => zitiService.list('posture-checks'),
+    setRows,
+    (err) => onToast('error', 'Load failed', zitiService.errorText(err)),
+  );
 
   const columns: ColumnDef<PostureCheck>[] = [
     {

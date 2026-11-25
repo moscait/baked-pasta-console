@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useResettableState, useServiceLoad } from '../components/state-hooks';
 import type { EdgeRouterPolicy, ServiceEdgeRouterPolicy, ServicePolicy } from '../services/api-types';
 import { zitiService } from '../services/ziti-service';
 import { DataTable, ColumnDef } from '../components/DataTable';
@@ -11,7 +12,7 @@ export const PoliciesPage: React.FC<{
   initialTab?: PolicyTab;
   onToast: (level: 'info' | 'success' | 'warning' | 'error', title: string, detail?: string) => void;
 }> = ({ initialTab = 'service-policies', onToast }) => {
-  const [tab, setTab] = useState<PolicyTab>(initialTab);
+  const [tab, setTab] = useResettableState<PolicyTab>(initialTab);
   const [servicePolicies, setServicePolicies] = useState<ServicePolicy[]>([]);
   const [erPolicies, setErPolicies] = useState<EdgeRouterPolicy[]>([]);
   const [serpPolicies, setSerpPolicies] = useState<ServiceEdgeRouterPolicy[]>([]);
@@ -22,10 +23,6 @@ export const PoliciesPage: React.FC<{
   const [semantic, setSemantic] = useState<'AnyOf' | 'AllOf'>('AnyOf');
   const [leftRoles, setLeftRoles] = useState('#all');
   const [rightRoles, setRightRoles] = useState('#all');
-
-  useEffect(() => {
-    setTab(initialTab);
-  }, [initialTab]);
 
   const openNewServicePolicy = () => {
     setTab('service-policies');
@@ -38,25 +35,20 @@ export const PoliciesPage: React.FC<{
 
   useCreateIntent({ 'service-policy': openNewServicePolicy });
 
-  const load = useCallback(async () => {
-    try {
-      const [sps, erps, serps] = await Promise.all([
+  const load = useServiceLoad(
+    () =>
+      Promise.all([
         zitiService.list('service-policies'),
         zitiService.list('edge-router-policies'),
         zitiService.list('service-edge-router-policies'),
-      ]);
+      ]),
+    ([sps, erps, serps]) => {
       setServicePolicies(sps);
       setErPolicies(erps);
       setSerpPolicies(serps);
-    } catch (err) {
-      onToast('error', 'Failed to load policies', zitiService.errorText(err));
-    }
-  }, [onToast]);
-
-  useEffect(() => {
-    load();
-    return zitiService.subscribe(load);
-  }, [load]);
+    },
+    (err) => onToast('error', 'Failed to load policies', zitiService.errorText(err)),
+  );
 
   const roleBadges = (roles: string[] = []) => (
     <div className="flex flex-wrap gap-1">

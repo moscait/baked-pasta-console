@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import {
   BrowserRouter,
   Link,
@@ -111,9 +111,10 @@ const AppShell: React.FC = () => {
     addToast('info', 'Signed out', 'Your controller session was removed from this browser.');
   };
 
+  const nextToastId = useRef(0);
   const addToast = useCallback(
     (level: 'info' | 'success' | 'warning' | 'error', title: string, detail?: string) => {
-      const id = Date.now() + Math.random();
+      const id = ++nextToastId.current;
       setToasts((prev) => [...prev, { id, level, title, detail }]);
       setTimeout(() => {
         setToasts((prev) => prev.filter((t) => t.id !== id));

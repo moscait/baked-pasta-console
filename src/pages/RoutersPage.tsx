@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useResettableState, useServiceLoad } from '../components/state-hooks';
 import { QrCode, RotateCcw } from 'lucide-react';
 import type { EdgeRouter, TransitRouter } from '../services/api-types';
 import { zitiService } from '../services/ziti-service';
@@ -33,16 +34,12 @@ const actionBtn =
   'p-1.5 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)] text-[var(--ac-muted)] hover:text-[var(--ac-ink)] cursor-pointer';
 
 export const RoutersPage: React.FC<{ initialTab?: RouterKind; onToast: Toast }> = ({ initialTab = 'edge-routers', onToast }) => {
-  const [tab, setTab] = useState<RouterKind>(initialTab);
+  const [tab, setTab] = useResettableState<RouterKind>(initialTab);
   const [edgeRouters, setEdgeRouters] = useState<EdgeRouter[]>([]);
   const [transitRouters, setTransitRouters] = useState<TransitRouter[]>([]);
   const [form, setForm] = useState<{ kind: RouterKind; editing: AnyRouter | null } | null>(null);
   const [jwtForId, setJwtForId] = useState<string | null>(null);
   const [reEnroll, setReEnroll] = useState<{ kind: RouterKind; router: AnyRouter } | null>(null);
-
-  useEffect(() => {
-    setTab(initialTab);
-  }, [initialTab]);
 
   const openNewEdgeRouter = () => {
     setTab('edge-routers');
@@ -51,20 +48,14 @@ export const RoutersPage: React.FC<{ initialTab?: RouterKind; onToast: Toast }> 
 
   useCreateIntent({ 'edge-router': openNewEdgeRouter });
 
-  const load = useCallback(async () => {
-    try {
-      const [ers, trs] = await Promise.all([zitiService.list('edge-routers'), zitiService.list('transit-routers')]);
+  const load = useServiceLoad(
+    () => Promise.all([zitiService.list('edge-routers'), zitiService.list('transit-routers')]),
+    ([ers, trs]) => {
       setEdgeRouters(ers);
       setTransitRouters(trs);
-    } catch (err) {
-      onToast('error', 'Failed to load routers', zitiService.errorText(err));
-    }
-  }, [onToast]);
-
-  useEffect(() => {
-    load();
-    return zitiService.subscribe(load);
-  }, [load]);
+    },
+    (err) => onToast('error', 'Failed to load routers', zitiService.errorText(err)),
+  );
 
   const remove = (kind: RouterKind) => async (row: AnyRouter) => {
     await zitiService.remove(kind, row.id);

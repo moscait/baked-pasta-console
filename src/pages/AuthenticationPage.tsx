@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
+import { useResettableState, useServiceLoad } from '../components/state-hooks';
 import { BadgeCheck, KeySquare } from 'lucide-react';
 import type { AuthPolicy, CertificateAuthority, Collection, ExternalJwtSigner } from '../services/api-types';
 import { zitiService } from '../services/ziti-service';
@@ -22,7 +23,7 @@ export const AuthenticationPage: React.FC<{
   initialTab?: AuthTab;
   onToast: (level: 'info' | 'success' | 'warning' | 'error', title: string, detail?: string) => void;
 }> = ({ initialTab = 'cas', onToast }) => {
-  const [tab, setTab] = useState<AuthTab>(initialTab);
+  const [tab, setTab] = useResettableState<AuthTab>(initialTab);
   const [cas, setCas] = useState<CertificateAuthority[]>([]);
   const [authPolicies, setAuthPolicies] = useState<AuthPolicy[]>([]);
   const [signers, setSigners] = useState<ExternalJwtSigner[]>([]);
@@ -30,29 +31,16 @@ export const AuthenticationPage: React.FC<{
   const closeDialog = useCallback(() => setDialog(null), []);
   const saved = useCallback((title: string, name: string) => onToast('success', title, name), [onToast]);
 
-  useEffect(() => {
-    setTab(initialTab);
-  }, [initialTab]);
-
-  const load = useCallback(async () => {
-    try {
-      const [c, ap, s] = await Promise.all([
-        zitiService.list('cas'),
-        zitiService.list('auth-policies'),
-        zitiService.list('external-jwt-signers'),
-      ]);
+  const load = useServiceLoad(
+    () =>
+      Promise.all([zitiService.list('cas'), zitiService.list('auth-policies'), zitiService.list('external-jwt-signers')]),
+    ([c, ap, s]) => {
       setCas(c);
       setAuthPolicies(ap);
       setSigners(s);
-    } catch (err) {
-      onToast('error', 'Load failed', zitiService.errorText(err));
-    }
-  }, [onToast]);
-
-  useEffect(() => {
-    load();
-    return zitiService.subscribe(load);
-  }, [load]);
+    },
+    (err) => onToast('error', 'Load failed', zitiService.errorText(err)),
+  );
 
   // Errors propagate so the table's delete confirmation (and bulk delete) report them per row.
   const remove =

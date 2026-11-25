@@ -9,6 +9,7 @@ import { CanvasBoard, CanvasBoardHandle } from './CanvasBoard';
 import { AccessWizard } from './AccessWizard';
 import type { WizardPlan } from './access-wizard.logic';
 import { revertsOf, zitiService } from '../../services/ziti-service';
+import { useServiceLoad } from '../../components/state-hooks';
 import { DrawerKind, ToastFn, showEverything } from './canvas-page.shared';
 import { collectProblems } from './problem-rows';
 import { useCanvasModel } from './useCanvasModel';
@@ -55,15 +56,15 @@ export const AccessCanvasPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) =>
   const [apiSessions, setApiSessions] = useState<ApiSession[]>([]);
   const [concPolicy, setConcPolicy] = useState<ConcurrencyPolicy>(() => zitiService.getConcurrencyPolicy());
 
-  const loadLiveSessions = useCallback(async () => {
-    const rows = await zitiService.list('api-sessions').catch(() => []);
-    setApiSessions(rows);
-  }, []);
+  // Live session overlay: loaded on mount and after commits; a failure just leaves it empty.
+  const loadLiveSessions = useServiceLoad(
+    () => zitiService.list('api-sessions').catch(() => []),
+    setApiSessions,
+    () => {},
+    { onChange: false },
+  );
 
-  useEffect(() => {
-    loadLiveSessions();
-    return zitiService.subscribePolicy(() => setConcPolicy(zitiService.getConcurrencyPolicy()));
-  }, [loadLiveSessions]);
+  useEffect(() => zitiService.subscribePolicy(() => setConcPolicy(zitiService.getConcurrencyPolicy())), []);
 
   const changes = useChangeSets({
     committed,
