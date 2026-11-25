@@ -221,8 +221,9 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
     });
     mapRef.current = map;
     // The container is sized by flex layout; let Leaflet measure it after first paint.
-    requestAnimationFrame(() => map.invalidateSize());
+    const frame = requestAnimationFrame(() => map.invalidateSize());
     return () => {
+      cancelAnimationFrame(frame); // the map may be removed before the frame runs
       map.remove();
       mapRef.current = null;
       layersRef.current = null;
