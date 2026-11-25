@@ -1,15 +1,20 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import type { Identity } from '../services/api-types';
+import type { ApiSession, Identity } from '../services/api-types';
 import { zitiService } from '../services/ziti-service';
 import { DataTable, ColumnDef } from '../components/DataTable';
 import { ModalDialog } from '../components/ModalDialog';
-import { Check, Copy, Download, QrCode, Shield, Terminal, UserCheck } from 'lucide-react';
+import { AlertTriangle, Check, Copy, Download, QrCode, Shield, Terminal, UserCheck } from 'lucide-react';
+import { ConcurrencyPolicy, evaluateSessionMonitor } from '../features/sessions/session-monitor.logic';
 
 export const IdentitiesPage: React.FC<{
   onToast: (level: 'info' | 'success' | 'warning' | 'error', title: string, detail?: string) => void;
 }> = ({ onToast }) => {
+  const navigate = useNavigate();
   const [rows, setRows] = useState<Identity[]>([]);
+  const [apiSessions, setApiSessions] = useState<ApiSession[]>([]);
+  const [policy, setPolicy] = useState<ConcurrencyPolicy>(() => zitiService.getConcurrencyPolicy());
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Identity | null>(null);
   const [name, setName] = useState('');
@@ -21,16 +26,37 @@ export const IdentitiesPage: React.FC<{
 
   const load = useCallback(async () => {
     try {
-      const list = await zitiService.list('identities');
+      const [list, apiSess] = await Promise.all([
+        zitiService.list('identities'),
+        zitiService.list('api-sessions').catch(() => []),
+      ]);
       setRows(list);
+      setApiSessions(apiSess);
     } catch (err) {
       onToast('error', 'Failed to load identities', zitiService.errorText(err));
     }
   }, [onToast]);
 
+  const sessionReport = useMemo(
+    () =>
+      evaluateSessionMonitor({
+        identities: rows,
+        apiSessions,
+        sessions: [],
+        policy,
+        currentSessionToken: zitiService.currentSessionToken(),
+      }),
+    [rows, apiSessions, policy],
+  );
+
   useEffect(() => {
     load();
-    return zitiService.subscribe(load);
+    const unsubData = zitiService.subscribe(load);
+    const unsubPolicy = zitiService.subscribePolicy(() => setPolicy(zitiService.getConcurrencyPolicy()));
+    return () => {
+      unsubData();
+      unsubPolicy();
+    };
   }, [load]);
 
   const openCreate = () => {
@@ -172,22 +198,52 @@ export const IdentitiesPage: React.FC<{
     },
     {
       key: 'online',
-      header: 'Connection',
-      getValue: (row) => (row.hasEdgeRouterConnection ? 'Online' : 'Offline'),
-      render: (row) => (
-        <span
-          className={`inline-flex items-center gap-1.5 text-xs ${
-            row.hasEdgeRouterConnection ? 'text-[var(--ac-ok)] font-medium' : 'text-[var(--ac-muted)]'
-          }`}
-        >
-          <span
-            className={`w-2 h-2 rounded-full ${
-              row.hasEdgeRouterConnection ? 'bg-[var(--ac-ok)]' : 'bg-[var(--ac-muted)]/40'
-            }`}
-          />
-          {row.hasEdgeRouterConnection ? 'Connected' : 'Offline'}
-        </span>
-      ),
+      header: 'Connection & Client IPs',
+      getValue: (row) => {
+        const s = sessionReport.byIdentity.get(row.id);
+        if (s?.finding) return `Concurrent (${s.distinctLiveIps.join(', ')})`;
+        return row.hasEdgeRouterConnection ? `Online ${s?.distinctLiveIps.join(', ') || ''}` : 'Offline';
+      },
+      render: (row) => {
+        const s = sessionReport.byIdentity.get(row.id);
+        const ips = s?.distinctLiveIps || [];
+        return (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span
+              className={`inline-flex items-center gap-1.5 text-xs ${
+                row.hasEdgeRouterConnection ? 'text-[var(--ac-ok)] font-medium' : 'text-[var(--ac-muted)]'
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  row.hasEdgeRouterConnection ? 'bg-[var(--ac-ok)]' : 'bg-[var(--ac-muted)]/40'
+                }`}
+              />
+              {row.hasEdgeRouterConnection ? 'Connected' : 'Offline'}
+            </span>
+            {s?.finding ? (
+              <button
+                type="button"
+                onClick={() => navigate(`/sessions?q=${encodeURIComponent(row.name)}`)}
+                title={`${s.finding.summary} — click to inspect in Traffic & Sessions`}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--ac-bad-soft)] text-[var(--ac-bad)] border border-[var(--ac-bad)]/40 text-[11px] font-semibold cursor-pointer"
+              >
+                <AlertTriangle className="w-3 h-3" />
+                <span>{ips.length >= 2 ? `${ips.length} IPs` : `${s.liveSessionCount} sessions`}</span>
+              </button>
+            ) : ips.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => navigate(`/sessions?ip=${encodeURIComponent(ips[0])}`)}
+                title="Click to filter Traffic & Sessions by this IP"
+                className="px-1.5 py-0.5 rounded bg-[var(--ac-surface-2)] border border-[var(--ac-line)] font-mono text-[11px] text-[var(--ac-muted)] hover:text-[var(--ac-ink)] cursor-pointer"
+              >
+                {ips.join(', ')}
+              </button>
+            ) : null}
+          </div>
+        );
+      },
     },
     {
       key: 'sdkInfo',

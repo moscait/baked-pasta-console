@@ -412,6 +412,23 @@ dialog::backdrop {
 .ab-dot.pend {
   background: var(--ac-pending);
 }
+.ab-ip-badge {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--ac-mono);
+  border-radius: 999px;
+  padding: 0 5px;
+  line-height: 16px;
+  background: var(--ac-pending-soft);
+  color: var(--ac-pending);
+  border: 1px solid color-mix(in srgb, var(--ac-pending) 40%, transparent);
+}
+.ab-ip-badge.critical {
+  background: var(--ac-bad-soft);
+  color: var(--ac-bad);
+  border-color: color-mix(in srgb, var(--ac-bad) 45%, transparent);
+}
 .ab-empty-row {
   height: 26px;
   line-height: 26px;

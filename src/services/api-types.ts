@@ -53,11 +53,26 @@ export interface Identity extends NamedEntity {
   type?: EntityRef;
   isAdmin?: boolean;
   isDefaultAdmin?: boolean;
+  disabled?: boolean;
+  externalId?: string | null;
+  authPolicyId?: string;
   roleAttributes?: string[];
-  authenticators?: { updb?: { id: string }; cert?: { id: string } };
+  authenticators?: {
+    updb?: { id?: string; username?: string };
+    cert?: { id?: string; fingerprint?: string };
+  };
   enrollment?: { ott?: EnrollmentToken; updb?: EnrollmentToken; ca?: EnrollmentToken; ottca?: EnrollmentToken };
   hasEdgeRouterConnection?: boolean;
   sdkInfo?: { type?: string; appId?: string; version?: string };
+}
+
+export interface Authenticator extends BaseEntity {
+  method?: 'cert' | 'updb' | string;
+  identityId?: string;
+  identity?: EntityRef;
+  fingerprint?: string;
+  certPem?: string;
+  isIssuedByNetwork?: boolean;
 }
 
 // ------------------------------------------------------------------ services & configs
@@ -176,19 +191,29 @@ export interface ExternalJwtSigner extends NamedEntity {
 
 // ------------------------------------------------------------------ sessions
 
+/** Matches `sessionDetail` / `sessionManagementDetail` in `openziti/edge-api`. */
 export interface Session extends BaseEntity {
+  apiSessionId?: string;
+  apiSession?: EntityRef;
   serviceId?: string;
   service?: EntityRef;
   identityId?: string;
   type?: 'Dial' | 'Bind';
+  edgeRouters?: { id?: string; name: string; hostname?: string; urls?: Record<string, string> }[];
 }
 
+/** Matches `apiSessionDetail` in `openziti/edge-api`. */
 export interface ApiSession extends BaseEntity {
+  token?: string;
   identityId?: string;
   identity?: EntityRef;
   ipAddress?: string;
+  authenticatorId?: string;
   authQueries?: unknown[];
   lastActivityAt?: string;
+  cachedLastActivityAt?: string;
+  isMfaComplete?: boolean;
+  configTypes?: string[];
 }
 
 // ------------------------------------------------------------------ collection map
@@ -196,6 +221,7 @@ export interface ApiSession extends BaseEntity {
 /** Maps each management API collection path to the entity it returns. */
 export interface ApiEntities {
   identities: Identity;
+  authenticators: Authenticator;
   services: Service;
   'edge-routers': EdgeRouter;
   'transit-routers': TransitRouter;

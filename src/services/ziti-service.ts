@@ -16,6 +16,12 @@ import {
   serviceBody,
 } from '../features/access-canvas/access-canvas.logic';
 import { BrowserLayoutStore, LayoutStore, layoutStorageKey } from '../features/access-canvas/canvas-layout.store';
+import {
+  ConcurrencyPolicy,
+  DEFAULT_CONCURRENCY_POLICY,
+  RemediationStep,
+  normalizeConcurrencyPolicy,
+} from '../features/sessions/session-monitor.logic';
 import type { ApiEntities, ApiEnvelope, ApiWriteBody, Collection, ConfigType } from './api-types';
 import { RawDemoStore, createInitialDemoStore } from './demo-store';
 
@@ -76,6 +82,7 @@ export function revertsOf(err: unknown): AcRevert[] {
 
 const SETTINGS_KEY = 'ziti.settings';
 const DEMO_STORE_KEY = 'bpc.demo.store.v1';
+const CONCURRENCY_POLICY_KEY = 'bpc.concurrency.policy.v1';
 
 const DEFAULT_SETTINGS: ZitiSettings = {
   selectedEdgeController: typeof window !== 'undefined' ? window.location.origin : 'https://localhost:1280',
@@ -172,6 +179,7 @@ function messageOf(err: unknown): string {
 class ZitiServiceImpl {
   private settings: ZitiSettings;
   private listeners = new Set<() => void>();
+  private policyListeners = new Set<() => void>();
   public controllerVersion = 'v1.3.2';
   public oidcEnabled = false;
   public edgeOidcPath = '/oidc';
@@ -203,8 +211,24 @@ class ZitiServiceImpl {
     return () => this.listeners.delete(fn);
   }
 
+  /** Notifies only concurrency-policy readers so tuning thresholds never triggers full API reloads. */
+  subscribePolicy(fn: () => void): () => void {
+    this.policyListeners.add(fn);
+    return () => this.policyListeners.delete(fn);
+  }
+
   private notify(): void {
     this.listeners.forEach((fn) => fn());
+  }
+
+  private notifyPolicy(): void {
+    this.policyListeners.forEach((fn) => fn());
+  }
+
+  /** Active legacy `zt-session` token when present, used to protect this browser session from self-termination. */
+  currentSessionToken(): string | null {
+    if (this.settings.jwtToken && !this.settings.demoMode) return null;
+    return this.settings.session?.id || null;
   }
 
   /** True when this browser had no saved settings at startup, i.e. a first visit. */
@@ -723,12 +747,94 @@ class ZitiServiceImpl {
   async remove(collection: Collection, id: string): Promise<void> {
     if (this.settings.demoMode) {
       const store = this.getDemoStore();
-      (store[collection] as { id: string }[]) = (store[collection] || []).filter((x: { id: string }) => x.id !== id);
+      if (collection === 'api-sessions') {
+        const target = (store['api-sessions'] || []).find((s) => s.id === id);
+        store['api-sessions'] = (store['api-sessions'] || []).filter((s) => s.id !== id);
+        store.sessions = (store.sessions || []).filter((s) => s.apiSessionId !== id);
+        if (target?.identityId) {
+          const stillActive = store['api-sessions'].some((s) => s.identityId === target.identityId);
+          const ident = store.identities.find((i) => i.id === target.identityId);
+          if (ident && !stillActive) ident.hasEdgeRouterConnection = false;
+        }
+      } else if (collection === 'authenticators') {
+        store.authenticators = (store.authenticators || []).filter((a) => a.id !== id);
+        for (const ident of store.identities) {
+          if (ident.authenticators?.cert?.id === id) delete ident.authenticators.cert;
+          if (ident.authenticators?.updb?.id === id) delete ident.authenticators.updb;
+        }
+      } else {
+        (store[collection] as { id: string }[]) = (store[collection] || []).filter((x: { id: string }) => x.id !== id);
+      }
       this.saveDemoStore(store);
       return;
     }
 
     await this.request('DELETE', `${collection}/${encodeURIComponent(id)}`, `DELETE ${collection}/${id} failed`);
+  }
+
+  /** Fetches authenticators for a single identity on demand (used before credential revocation). */
+  async listIdentityAuthenticators(identityId: string): Promise<ApiEntities['authenticators'][]> {
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      return clone((store.authenticators || []).filter((a) => a.identityId === identityId || a.identity?.id === identityId));
+    }
+    const json = await this.request<ApiEnvelope<ApiEntities['authenticators'][]> | null>(
+      'GET',
+      `identities/${encodeURIComponent(identityId)}/authenticators`,
+      `Failed to load authenticators for identity ${identityId}`,
+    );
+    return json?.data || [];
+  }
+
+  // ------------------------------------------------------------------ Concurrency Policy & Remediation
+  getConcurrencyPolicy(): ConcurrencyPolicy {
+    try {
+      const raw = localStorage.getItem(CONCURRENCY_POLICY_KEY);
+      if (raw) return normalizeConcurrencyPolicy(JSON.parse(raw) as Partial<ConcurrencyPolicy>);
+    } catch {
+      // ignore
+    }
+    return { ...DEFAULT_CONCURRENCY_POLICY };
+  }
+
+  saveConcurrencyPolicy(next: Partial<ConcurrencyPolicy>): ConcurrencyPolicy {
+    const normalized = normalizeConcurrencyPolicy({ ...this.getConcurrencyPolicy(), ...next });
+    try {
+      localStorage.setItem(CONCURRENCY_POLICY_KEY, JSON.stringify(normalized));
+    } catch {
+      // ignore
+    }
+    this.notifyPolicy();
+    return normalized;
+  }
+
+  resetConcurrencyPolicy(): ConcurrencyPolicy {
+    try {
+      localStorage.removeItem(CONCURRENCY_POLICY_KEY);
+    } catch {
+      // ignore
+    }
+    this.notifyPolicy();
+    return { ...DEFAULT_CONCURRENCY_POLICY };
+  }
+
+  /**
+   * Executes remediation steps sequentially. Stops immediately if an authenticator DELETE fails
+   * so active sessions are not dropped while leaving the credential valid.
+   */
+  async executeRemediationSteps(steps: RemediationStep[]): Promise<{ executed: number; failures: string[] }> {
+    let executed = 0;
+    const failures: string[] = [];
+    for (const step of steps) {
+      try {
+        await this.remove(step.collection, step.targetId);
+        executed++;
+      } catch (err) {
+        failures.push(`${step.collection}/${step.targetId}: ${this.errorText(err)}`);
+        if (step.collection === 'authenticators') break;
+      }
+    }
+    return { executed, failures };
   }
 
   /** Simulates enrolling an identity in Demo Mode so the user can see live status updates! */
@@ -767,6 +873,7 @@ class ZitiServiceImpl {
         isAdmin:
           !!i.isDefaultAdmin ||
           (!!i.isAdmin && !i.roleAttributes?.length && !i.authenticators?.cert && !i.enrollment?.ott),
+        externalId: i.externalId,
       }));
     const services: AcService[] = svcs.map((s) => ({
       id: s.id,

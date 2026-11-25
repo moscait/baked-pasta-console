@@ -282,4 +282,44 @@ describe('canvas-board.logic', () => {
       expect(k.attrs.has('identity:i1:ops')).toBe(true);
     });
   });
+
+  describe('traffic and client-IP filtering', () => {
+    it('isolates identities matching a CIDR or concurrency filter along with their reachable policy paths', () => {
+      const m = model();
+      m.identities[0].sessionIps = ['10.20.1.5'];
+      m.identities[0].liveSessionCount = 1;
+      m.identities[1].sessionIps = ['10.20.1.5', '203.0.113.88'];
+      m.identities[1].liveSessionCount = 2;
+      m.identities[1].concurrency = {
+        severity: 'critical',
+        concurrentSessionCount: 2,
+        distinctIps: ['10.20.1.5', '203.0.113.88'],
+        summary: '2 active sessions across 2 IPs',
+      };
+
+      const byExternalIp = build(m, { ...allTypes(), ipFilter: '!10.0.0.0/8' });
+      const keys = byExternalIp.nodes.map((n) => n.key);
+      // bob is in #sales and #ops; #sales connects through p1 to #web; loner (i4) has no IP and is hidden.
+      expect(keys).toContain(groupKey('identity', 'sales'));
+      expect(keys).toContain(groupKey('identity', 'ops'));
+      expect(keys).toContain(hubKey('dial', 'p1'));
+      expect(keys).toContain(groupKey('service', 'web'));
+      expect(keys).not.toContain(freeKey('identity', 'i4'));
+
+      const sales = byExternalIp.nodes.find((n) => n.key === groupKey('identity', 'sales'))!;
+      expect(sales.members.find((mb) => mb.id === 'i2')?.hit).toBe(true);
+      expect(sales.members.find((mb) => mb.id === 'i2')?.concurrentSeverity).toBe('critical');
+      // Live session concurrency is a badge/filter, not a configuration problem.
+      expect(sales.members.find((mb) => mb.id === 'i2')?.problems).toEqual([]);
+      expect(sales.members.find((mb) => mb.id === 'i1')?.hit).toBe(false);
+
+      const concurrentOnly = build(m, { ...allTypes(), concurrentOnly: true });
+      expect(concurrentOnly.nodes.map((n) => n.key)).toContain(groupKey('identity', 'ops'));
+      expect(concurrentOnly.nodes.map((n) => n.key)).not.toContain(freeKey('identity', 'i4'));
+
+      // Incomplete CIDR mid-entry acts as a no-op instead of blanking the canvas.
+      const midEntry = build(m, { ...allTypes(), ipFilter: '10.0.0.0/' });
+      expect(midEntry.nodes.map((n) => n.key)).toContain(freeKey('identity', 'i4'));
+    });
+  });
 });

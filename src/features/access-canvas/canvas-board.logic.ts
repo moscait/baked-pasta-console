@@ -21,6 +21,7 @@ import {
   matches,
   serviceRouters,
 } from './access-canvas.logic';
+import { matchesIpFilter, validateIpFilter } from '../sessions/session-monitor.logic';
 
 export type HubFamily = 'dial' | 'bind' | 'erp' | 'serp';
 
@@ -31,6 +32,9 @@ export interface BoardMember {
   problems: string[];
   pending: boolean;
   hit: boolean;
+  ips?: string[];
+  liveSessions?: number;
+  concurrentSeverity?: 'warning' | 'critical';
 }
 
 export interface BoardNode {
@@ -74,6 +78,9 @@ export interface BoardFilters {
   attrs: string[];
   search: string;
   problemsOnly: boolean;
+  ipFilter?: string;
+  activeSessionsOnly?: boolean;
+  concurrentOnly?: boolean;
 }
 
 export interface BoardMarks {
@@ -207,14 +214,21 @@ export function buildBoard(m: AcModel, o: BuildOptions): Board {
   const hitText = (s: string) => !!q && s.toLowerCase().includes(q);
   const nodes = new Map<string, BoardNode>();
 
-  const member = (kind: AcKind, e: { id: string; name: string; attrs: string[] }, attr?: string): BoardMember => ({
-    kind,
-    id: e.id,
-    name: e.name,
-    problems: entityProblems(m, kind, e.id),
-    pending: !!attr && (o.marks.attrs.has(`${kind}:${e.id}:${attr}`) || o.marks.created.has(e.id)),
-    hit: hitText(e.name),
-  });
+  const member = (kind: AcKind, e: { id: string; name: string; attrs: string[] }, attr?: string): BoardMember => {
+    const ident = kind === 'identity' ? m.identities.find((x) => x.id === e.id) : undefined;
+    const ips = ident?.sessionIps;
+    return {
+      kind,
+      id: e.id,
+      name: e.name,
+      problems: entityProblems(m, kind, e.id),
+      pending: !!attr && (o.marks.attrs.has(`${kind}:${e.id}:${attr}`) || o.marks.created.has(e.id)),
+      hit: hitText(e.name) || !!(ips && ips.some((ip) => hitText(ip))),
+      ips,
+      liveSessions: ident?.liveSessionCount,
+      concurrentSeverity: ident?.concurrency?.severity,
+    };
+  };
 
   const ensureGroup = (kind: AcKind, attr: string) => {
     const key = groupKey(kind, attr);
@@ -353,15 +367,33 @@ export function buildBoard(m: AcModel, o: BuildOptions): Board {
     });
   }
 
+  const ipExpr = (o.filters.ipFilter || '').trim();
+  const ipExprValid = !ipExpr || validateIpFilter(ipExpr).valid;
+  const effectiveIpExpr = ipExprValid ? ipExpr : '';
+  const memberMatchesTraffic = (mb: BoardMember): boolean => {
+    if (mb.kind !== 'identity') return false;
+    if (effectiveIpExpr && !(mb.ips || []).some((ip) => matchesIpFilter(ip, effectiveIpExpr))) return false;
+    if (o.filters.concurrentOnly && !mb.concurrentSeverity) return false;
+    if (o.filters.activeSessionsOnly && !(mb.liveSessions && mb.liveSessions > 0)) return false;
+    return Boolean(effectiveIpExpr || o.filters.concurrentOnly || o.filters.activeSessionsOnly);
+  };
+
   for (const n of nodes.values()) {
     if (n.type !== 'group') continue;
     n.members.sort((a, b) => a.name.localeCompare(b.name));
-    const narrowed = !!q && !n.hit && !o.expanded.has(n.key) && n.members.some((x) => x.hit);
-    n.shown = narrowed
+    const narrowedBySearch = !!q && !n.hit && !o.expanded.has(n.key) && n.members.some((x) => x.hit);
+    const narrowedByTraffic =
+      !narrowedBySearch &&
+      !o.expanded.has(n.key) &&
+      Boolean(effectiveIpExpr || o.filters.concurrentOnly || o.filters.activeSessionsOnly) &&
+      n.members.some(memberMatchesTraffic);
+    n.shown = narrowedBySearch
       ? n.members.filter((x) => x.hit)
-      : o.expanded.has(n.key)
-        ? n.members
-        : n.members.slice(0, GEO.maxRows);
+      : narrowedByTraffic
+        ? n.members.filter(memberMatchesTraffic)
+        : o.expanded.has(n.key)
+          ? n.members
+          : n.members.slice(0, GEO.maxRows);
     n.more = n.members.length - n.shown.length;
     n.h = groupHeight(n.shown.length, n.more > 0);
     const bad = n.members.filter((x) => x.problems.length);
@@ -370,7 +402,7 @@ export function buildBoard(m: AcModel, o: BuildOptions): Board {
     n.pending =
       n.members.some((x) => x.pending) ||
       ((o.layout.groups || []).includes(`${n.kind}:${n.attr}`) && !n.members.length);
-    if (narrowed) n.hit = true;
+    if (narrowedBySearch) n.hit = true;
   }
 
   const all = [...nodes.values()];
@@ -405,12 +437,46 @@ export function applyFilters(nodes: BoardNode[], edges: BoardEdge[], f: BoardFil
     return out;
   };
 
+  const rawIpExpr = (f.ipFilter || '').trim();
+  const ipExpr = !rawIpExpr || validateIpFilter(rawIpExpr).valid ? rawIpExpr : '';
+  const hasTrafficFilter = !!ipExpr || !!f.activeSessionsOnly || !!f.concurrentOnly;
+  const memberMatchesTraffic = (mb: BoardMember): boolean => {
+    if (mb.kind !== 'identity') return false;
+    if (f.concurrentOnly && !mb.concurrentSeverity) return false;
+    if (f.activeSessionsOnly && !(mb.liveSessions && mb.liveSessions > 0) && !(mb.ips && mb.ips.length > 0)) {
+      return false;
+    }
+    if (ipExpr && !(mb.ips || []).some((ip) => matchesIpFilter(ip, ipExpr))) return false;
+    return true;
+  };
+
+  let trafficSeed: Set<string> | null = null;
+  if (hasTrafficFilter) {
+    trafficSeed = new Set<string>();
+    for (const n of nodes) {
+      if (n.type === 'group' && n.kind === 'identity') {
+        let matched = false;
+        for (const mb of n.members) {
+          if (memberMatchesTraffic(mb)) {
+            mb.hit = true;
+            matched = true;
+          }
+        }
+        if (matched) trafficSeed.add(n.key);
+      } else if (n.type === 'free' && n.kind === 'identity' && n.entity && memberMatchesTraffic(n.entity)) {
+        n.entity.hit = true;
+        n.hit = true;
+        trafficSeed.add(n.key);
+      }
+    }
+  }
+
   const attrSeed = f.attrs.length
     ? new Set(nodes.filter((n) => n.type === 'group' && f.attrs.includes(n.attr!)).map((n) => n.key))
     : null;
   const probSeed = f.problemsOnly ? new Set(nodes.filter((n) => n.problemCount > 0).map((n) => n.key)) : null;
   const nameSeed = f.search.trim() ? new Set(nodes.filter((n) => n.hit).map((n) => n.key)) : null;
-  for (const seed of [attrSeed, probSeed, nameSeed]) {
+  for (const seed of [attrSeed, probSeed, nameSeed, trafficSeed]) {
     if (!seed) continue;
     const keep = neighbours(seed);
     visible = new Set([...visible].filter((k) => keep.has(k)));

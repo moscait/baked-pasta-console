@@ -16,6 +16,9 @@ interface DataTableProps<T extends { id: string; name?: string }> {
   data: T[];
   columns: ColumnDef<T>[];
   searchPlaceholder?: string;
+  /** Optional controlled search value; when provided, filtering is delegated to the caller. */
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
   onCreate?: () => void;
   createLabel?: string;
   onEdit?: (row: T) => void;
@@ -35,6 +38,8 @@ export function DataTable<T extends { id: string; name?: string }>({
   data,
   columns,
   searchPlaceholder = 'Search by name or attribute…',
+  searchValue,
+  onSearchChange,
   onCreate,
   createLabel = 'Create',
   onEdit,
@@ -43,7 +48,15 @@ export function DataTable<T extends { id: string; name?: string }>({
   headerTabs,
 }: DataTableProps<T>) {
   const captionId = useId();
-  const [query, setQuery] = useState('');
+  const [internalQuery, setInternalQuery] = useState('');
+  const query = searchValue !== undefined ? searchValue : internalQuery;
+  const setQuery = useCallback(
+    (next: string) => {
+      if (onSearchChange) onSearchChange(next);
+      else setInternalQuery(next);
+    },
+    [onSearchChange],
+  );
   const [sortCol, setSortCol] = useState<string>(columns[0]?.key || 'name');
   const [sortDir, setSortDir] = useState<'ascending' | 'descending'>('ascending');
   const [confirmRow, setConfirmRow] = useState<T | null>(null);
@@ -73,7 +86,7 @@ export function DataTable<T extends { id: string; name?: string }>({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = !q
+    const list = !q || searchValue !== undefined
       ? [...data]
       : data.filter((row) => JSON.stringify(row).toLowerCase().includes(q));
     const col = columns.find((c) => c.key === sortCol);
@@ -88,7 +101,7 @@ export function DataTable<T extends { id: string; name?: string }>({
       }
       return factor * collator.compare(String(va), String(vb));
     });
-  }, [data, query, sortCol, sortDir, columns]);
+  }, [data, query, searchValue, sortCol, sortDir, columns]);
 
   const handleSort = (key: string) => {
     if (sortCol === key) {
