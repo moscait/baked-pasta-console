@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { defineConfig, type Plugin } from 'vitest/config';
+import { configDefaults, defineConfig, type Plugin } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
@@ -53,5 +53,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // Agent worktrees under .claude/ hold full copies of src; don't run their specs twice.
+    exclude: [...configDefaults.exclude, '.claude/**'],
   },
 });

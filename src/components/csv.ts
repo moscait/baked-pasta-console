@@ -30,9 +30,12 @@ export function csvFileName(caption: string, now = new Date()): string {
   return `${slug || 'export'}-${now.toISOString().slice(0, 10)}.csv`;
 }
 
-/** Starts a browser download of `text`. The UTF-8 BOM makes Excel read non-ASCII names correctly. */
+/**
+ * Starts a browser download of `text`. CSV gets a UTF-8 BOM so Excel reads non-ASCII names
+ * correctly; other types (a JWT for an enroller) are written byte-exact.
+ */
 export function downloadText(fileName: string, text: string, type = 'text/csv;charset=utf-8'): void {
-  const blob = new Blob(['﻿', text], { type });
+  const blob = new Blob(type.startsWith('text/csv') ? ['\uFEFF', text] : [text], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

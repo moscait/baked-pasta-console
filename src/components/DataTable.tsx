@@ -335,7 +335,9 @@ export function DataTable<T extends { id: string; name?: string }>({
                     </td>
                   )}
                   {columns.map((c) => (
-                    <td key={c.key}>{c.render ? c.render(row) : (cellValue(row, c.key) as React.ReactNode)}</td>
+                    <td key={c.key}>
+                      {c.render ? c.render(row) : c.getValue ? c.getValue(row) : (cellValue(row, c.key) as React.ReactNode)}
+                    </td>
                   ))}
                   {(onEdit || onDelete || extraActions) && (
                     <td className="whitespace-nowrap">
