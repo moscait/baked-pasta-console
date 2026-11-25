@@ -15,6 +15,7 @@ import {
   serpBody,
   serviceBody,
 } from '../features/access-canvas/access-canvas.logic';
+import { looksLikePemCertificate } from '../components/form-values';
 import { BrowserLayoutStore, LayoutStore, layoutStorageKey } from '../features/access-canvas/canvas-layout.store';
 import {
   ConcurrencyPolicy,
@@ -22,8 +23,17 @@ import {
   RemediationStep,
   normalizeConcurrencyPolicy,
 } from '../features/sessions/session-monitor.logic';
-import type { ApiEntities, ApiEnvelope, ApiWriteBody, Collection, ConfigType, Identity } from './api-types';
-import { RawDemoStore, createInitialDemoStore, demoFabric } from './demo-store';
+import type {
+  ApiEntities,
+  ApiEnvelope,
+  ApiWriteBody,
+  CertificateAuthority,
+  Collection,
+  ConfigType,
+  Identity,
+  ServiceConfigOverride,
+} from './api-types';
+import { DemoCollections, RawDemoStore, createInitialDemoStore, demoFabric } from './demo-store';
 import type { FabricEntities } from '../features/network-map/network-map.logic';
 
 export type { RawDemoStore } from './demo-store';
@@ -80,6 +90,8 @@ export class CanvasApplyError extends Error {
 export function revertsOf(err: unknown): AcRevert[] {
   return err instanceof CanvasApplyError ? err.reverts : [];
 }
+
+type ApiRoot = 'edge/management/v1' | 'fabric/v1';
 
 const SETTINGS_KEY = 'ziti.settings';
 const DEMO_STORE_KEY = 'bpc.demo.store.v1';
@@ -166,6 +178,16 @@ function tokensFromResponse(body: OAuthTokenResponse, previousRefresh?: string):
 }
 
 /** Best-effort extraction of a human-readable message from an API error body or thrown value. */
+function refOf(rows: { id: string; name: string }[], id: string) {
+  const row = rows.find((r) => r.id === id);
+  return row ? { id: row.id, name: row.name } : undefined;
+}
+
+function demoRouterJwt(id: string, name: string): string {
+  const jti = Math.random().toString(36).slice(2, 9);
+  return `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(JSON.stringify({ sub: id, name, router: true, jti }))}.router-jwt`;
+}
+
 function messageOf(err: unknown): string {
   if (typeof err === 'string') return err;
   if (!err || typeof err !== 'object') return '';
@@ -636,36 +658,70 @@ class ZitiServiceImpl {
     path: string,
     failure: string,
     body?: ApiWriteBody,
-    api: 'edge/management/v1' | 'fabric/v1' = 'edge/management/v1',
+    api: ApiRoot = 'edge/management/v1',
   ): Promise<T> {
-    if (!this.isAuthenticated()) throw new Error('Not signed in to a controller.');
-    if (this.canRefresh() && this.accessTokenExpiringSoon()) await this.refreshSession();
-
-    const send = () =>
-      fetch(`${this.controllerUrl()}/${api}/${path}`, {
-        method,
-        headers: this.authHeaders(),
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
-    let resp = await send();
-    // One refresh-and-retry for OIDC sessions; the access token may have been revoked or
-    // expired early. Only if that fails is the session cleared.
-    if (resp.status === 401 && this.canRefresh() && (await this.refreshSession())) resp = await send();
-    if (resp.status === 401) {
-      if (this.isAuthenticated()) this.logout();
-      throw new Error('Session expired. Please sign in again.');
-    }
+    const resp = await this.send(method, path, body === undefined ? {} : { body: JSON.stringify(body) }, api);
     // The response body is trusted to match the management API schema for this path.
     const json = (await resp.json().catch(() => null)) as T;
     if (!resp.ok) throw new Error(messageOf(json) || `${failure} (HTTP ${resp.status})`);
     return json;
   }
 
+  /** Like `request`, for the few endpoints that take or return plain text (CA verify, CA JWT). */
+  private async requestText(
+    method: string,
+    path: string,
+    failure: string,
+    opts: { body?: string; contentType?: string; accept?: string } = {},
+  ): Promise<string> {
+    const headers: Record<string, string> = {};
+    if (opts.contentType) headers['Content-Type'] = opts.contentType;
+    if (opts.accept) headers.Accept = opts.accept;
+    const resp = await this.send(method, path, { body: opts.body, headers });
+    const text = await resp.text().catch(() => '');
+    if (!resp.ok) {
+      let detail: unknown = null;
+      try {
+        detail = JSON.parse(text);
+      } catch {
+        // not a JSON error envelope
+      }
+      throw new Error(messageOf(detail) || `${failure} (HTTP ${resp.status})`);
+    }
+    return text;
+  }
+
+  private async send(
+    method: string,
+    path: string,
+    init: { body?: string; headers?: Record<string, string> },
+    api: ApiRoot = 'edge/management/v1',
+  ): Promise<Response> {
+    if (!this.isAuthenticated()) throw new Error('Not signed in to a controller.');
+    if (this.canRefresh() && this.accessTokenExpiringSoon()) await this.refreshSession();
+
+    const once = () =>
+      fetch(`${this.controllerUrl()}/${api}/${path}`, {
+        method,
+        headers: this.authHeaders(init.headers),
+        body: init.body,
+      });
+    let resp = await once();
+    // One refresh-and-retry for OIDC sessions; the access token may have been revoked or
+    // expired early. Only if that fails is the session cleared.
+    if (resp.status === 401 && this.canRefresh() && (await this.refreshSession())) resp = await once();
+    if (resp.status === 401) {
+      if (this.isAuthenticated()) this.logout();
+      throw new Error('Session expired. Please sign in again.');
+    }
+    return resp;
+  }
+
   // ------------------------------------------------------------------ CRUD operations
   async list<K extends Collection>(collection: K): Promise<ApiEntities[K][]> {
     if (this.settings.demoMode) {
-      const store = this.getDemoStore();
-      return clone(store[collection] || []);
+      const collections: DemoCollections = this.getDemoStore();
+      return clone(collections[collection] || []);
     }
     const out: ApiEntities[K][] = [];
     const limit = 500;
@@ -706,12 +762,15 @@ class ZitiServiceImpl {
         created.enrollment = { ott: this.demoOttToken(id, name || id, new Date(Date.now() + 86400000)) };
         created.hasEdgeRouterConnection = false;
       }
-      if (collection === 'edge-routers') {
+      if (collection === 'edge-routers' || collection === 'transit-routers') {
         created.isOnline = false;
         created.isVerified = false;
-        created.enrollmentJwt = `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(
-          JSON.stringify({ sub: id, name, router: true }),
-        )}.router-jwt`;
+        created.enrollmentJwt = demoRouterJwt(id, name || id);
+        created.enrollmentExpiresAt = new Date(Date.now() + 86400000).toISOString();
+      }
+      if (collection === 'cas') {
+        created.isVerified = false;
+        created.verificationToken = Math.random().toString(36).slice(2, 12);
       }
       (store[collection] as unknown[]) = [...(store[collection] || []), created];
       this.saveDemoStore(store);
@@ -955,6 +1014,120 @@ class ZitiServiceImpl {
       return;
     }
     await this.request('DELETE', `identities/${encodeURIComponent(identity.id)}/mfa`, 'Reset MFA failed');
+    this.notify();
+  }
+
+  // ------------------------------------------------------------------ router enrollment
+
+  /**
+   * Re-enrolls a router (`POST edge-routers/{id}/re-enroll` or the transit equivalent). The
+   * router's certificate is revoked and it disconnects until it enrolls with the new JWT.
+   */
+  async reEnrollRouter(collection: 'edge-routers' | 'transit-routers', router: { id: string; name: string }) {
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      const rows: { id: string; name: string; isOnline?: boolean; isVerified?: boolean; enrollmentJwt?: string; enrollmentExpiresAt?: string }[] =
+        store[collection];
+      const row = rows.find((r) => r.id === router.id);
+      if (row) {
+        row.isOnline = false;
+        row.isVerified = false;
+        row.enrollmentJwt = demoRouterJwt(row.id, row.name);
+        row.enrollmentExpiresAt = new Date(Date.now() + 86400000).toISOString();
+        this.saveDemoStore(store);
+      }
+      return;
+    }
+    await this.request('POST', `${collection}/${encodeURIComponent(router.id)}/re-enroll`, 'Re-enroll failed', {});
+    this.notify();
+  }
+
+  // ------------------------------------------------------------------ certificate authorities
+
+  /** The enrollment JWT for identities that enroll with a certificate from this CA (`GET cas/{id}/jwt`). */
+  async caEnrollmentJwt(ca: CertificateAuthority): Promise<string> {
+    if (this.settings.demoMode) {
+      return `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(JSON.stringify({ em: 'ca', ca: ca.id }))}.demo-ca-jwt`;
+    }
+    return this.requestText('GET', `cas/${encodeURIComponent(ca.id)}/jwt`, 'Failed to fetch the CA JWT', {
+      accept: 'application/jwt',
+    });
+  }
+
+  /**
+   * Proves possession of a CA's private key (`POST cas/{id}/verify`). The body is a PEM
+   * certificate signed by the CA whose common name is the CA's `verificationToken`.
+   */
+  async verifyCa(ca: CertificateAuthority, certPem: string): Promise<void> {
+    if (!looksLikePemCertificate(certPem)) throw new Error('Paste a PEM certificate (-----BEGIN CERTIFICATE----- …).');
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      const row = store.cas.find((c) => c.id === ca.id);
+      if (row) {
+        row.isVerified = true;
+        this.saveDemoStore(store);
+      }
+      return;
+    }
+    await this.requestText('POST', `cas/${encodeURIComponent(ca.id)}/verify`, 'CA verification failed', {
+      body: certPem.trim(),
+      contentType: 'text/plain',
+    });
+    this.notify();
+  }
+
+  // ------------------------------------------------------------------ identity service config overrides
+
+  /** Configs this identity uses instead of a service's own (`GET identities/{id}/service-configs`). */
+  async listServiceConfigOverrides(identityId: string): Promise<ServiceConfigOverride[]> {
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      return (store.serviceConfigOverrides?.[identityId] || []).map((o) => ({
+        ...o,
+        service: refOf(store.services, o.serviceId),
+        config: refOf(store.configs, o.configId),
+      }));
+    }
+    const json = await this.request<ApiEnvelope<ServiceConfigOverride[]> | null>(
+      'GET',
+      `identities/${encodeURIComponent(identityId)}/service-configs?limit=500`,
+      'Failed to load config overrides',
+    );
+    return (json?.data || []).map((o) => ({
+      ...o,
+      serviceId: o.serviceId || o.service?.id || '',
+      configId: o.configId || o.config?.id || '',
+    }));
+  }
+
+  async addServiceConfigOverride(identityId: string, serviceId: string, configId: string): Promise<void> {
+    await this.changeServiceConfigOverride('POST', identityId, { serviceId, configId });
+  }
+
+  async removeServiceConfigOverride(identityId: string, serviceId: string, configId: string): Promise<void> {
+    await this.changeServiceConfigOverride('DELETE', identityId, { serviceId, configId });
+  }
+
+  private async changeServiceConfigOverride(
+    method: 'POST' | 'DELETE',
+    identityId: string,
+    pair: { serviceId: string; configId: string },
+  ): Promise<void> {
+    if (this.settings.demoMode) {
+      const store = this.getDemoStore();
+      const all = store.serviceConfigOverrides || {};
+      const current = (all[identityId] || []).filter(
+        (o) => !(o.serviceId === pair.serviceId && o.configId === pair.configId),
+      );
+      all[identityId] = method === 'POST' ? [...current, pair] : current;
+      store.serviceConfigOverrides = all;
+      this.saveDemoStore(store);
+      return;
+    }
+    const path = `identities/${encodeURIComponent(identityId)}/service-configs`;
+    await this.request(method, path, method === 'POST' ? 'Adding the override failed' : 'Removing the override failed', [
+      pair,
+    ]);
     this.notify();
   }
 

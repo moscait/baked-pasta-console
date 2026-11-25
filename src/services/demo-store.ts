@@ -1,9 +1,15 @@
-import type { ApiEntities, Collection } from './api-types';
+import type { ApiEntities, Collection, ServiceConfigOverride } from './api-types';
 import type { FabricCircuit, FabricEntities, FabricLink, FabricRouter } from '../features/network-map/network-map.logic';
 import { parseGeolocation } from '../features/network-map/network-map.logic';
 
 /** In-browser stand-in for the controller's data, used by the Interactive Demo Sandbox. */
-export type RawDemoStore = { [K in Collection]: ApiEntities[K][] };
+/** The demo rows for every management collection, shaped like controller responses. */
+export type DemoCollections = { [K in Collection]: ApiEntities[K][] };
+
+export type RawDemoStore = DemoCollections & {
+  /** Per-identity service config overrides (`identities/{id}/service-configs`), keyed by identity id. */
+  serviceConfigOverrides?: Record<string, ServiceConfigOverride[]>;
+};
 
 export function createInitialDemoStore(): RawDemoStore {
   const nowMs = Date.now();

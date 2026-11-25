@@ -6,6 +6,8 @@ import { zitiService } from '../services/ziti-service';
 import { DataTable, ColumnDef } from '../components/DataTable';
 import { ModalDialog } from '../components/ModalDialog';
 import { useCreateIntent } from '../components/useCreateIntent';
+import { downloadText } from '../components/csv';
+import { ConfigOverridesDialog, IdentityFormDialog } from '../features/identities/IdentityDialogs';
 import {
   AlertTriangle,
   Check,
@@ -16,6 +18,7 @@ import {
   RotateCcw,
   Shield,
   ShieldOff,
+  SlidersHorizontal,
   Terminal,
   UserCheck,
 } from 'lucide-react';
@@ -34,11 +37,9 @@ export const IdentitiesPage: React.FC<{
   const [rows, setRows] = useState<Identity[]>([]);
   const [apiSessions, setApiSessions] = useState<ApiSession[]>([]);
   const [policy, setPolicy] = useState<ConcurrencyPolicy>(() => zitiService.getConcurrencyPolicy());
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Identity | null>(null);
-  const [name, setName] = useState('');
-  const [attrsText, setAttrsText] = useState('');
-  const [isAdmin, setIsAdmin] = useState(false);
+  // undefined = closed, null = create, an identity = edit
+  const [formFor, setFormFor] = useState<Identity | null | undefined>(undefined);
+  const [overridesFor, setOverridesFor] = useState<Identity | null>(null);
 
   const [tokenModal, setTokenModal] = useState<Identity | null>(null);
   const [copied, setCopied] = useState(false);
@@ -128,54 +129,14 @@ export const IdentitiesPage: React.FC<{
     };
   }, [load]);
 
-  const openCreate = () => {
-    setEditing(null);
-    setName('');
-    setAttrsText('');
-    setIsAdmin(false);
-    setModalOpen(true);
-  };
+  const openCreate = () => setFormFor(null);
 
   useCreateIntent({ identity: openCreate });
 
-  const openEdit = (row: Identity) => {
-    setEditing(row);
-    setName(row.name || '');
-    setAttrsText((row.roleAttributes || []).join(', '));
-    setIsAdmin(!!row.isAdmin);
-    setModalOpen(true);
-  };
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const roleAttributes = attrsText
-      .split(/[,\s]+/)
-      .map((s) => s.trim().replace(/^#/, ''))
-      .filter(Boolean);
-    try {
-      if (editing) {
-        await zitiService.patch('identities', editing.id, {
-          name: name.trim(),
-          roleAttributes,
-          isAdmin,
-        });
-        onToast('success', 'Identity updated', name.trim());
-      } else {
-        await zitiService.create('identities', {
-          name: name.trim(),
-          type: 'Default',
-          isAdmin,
-          roleAttributes,
-          enrollment: { ott: true },
-        });
-        onToast('success', 'Identity created', `${name.trim()} is ready for enrollment.`);
-      }
-      setModalOpen(false);
-      await load();
-    } catch (err) {
-      onToast('error', 'Save failed', zitiService.errorText(err));
-    }
-  };
+  const toastSuccess = useCallback(
+    (title: string, detail: string) => onToast('success', title, detail),
+    [onToast],
+  );
 
   // Errors propagate so the table's confirm dialog (and bulk delete) can report them per row.
   const handleDelete = async (row: Identity) => {
@@ -196,14 +157,7 @@ export const IdentitiesPage: React.FC<{
   const downloadJwt = (row: Identity) => {
     const jwt = getJwt(row);
     if (!jwt) return;
-    const url = URL.createObjectURL(new Blob([jwt], { type: 'application/jwt' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${row.name}.jwt`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadText(`${row.name}.jwt`, jwt, 'application/jwt');
   };
 
   const columns: ColumnDef<Identity>[] = [
@@ -342,7 +296,7 @@ export const IdentitiesPage: React.FC<{
         columns={columns}
         createLabel="New Identity"
         onCreate={openCreate}
-        onEdit={openEdit}
+        onEdit={setFormFor}
         onDelete={handleDelete}
         extraActions={(row) => (
           <>
@@ -356,6 +310,15 @@ export const IdentitiesPage: React.FC<{
                 <QrCode className="w-3.5 h-3.5" />
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setOverridesFor(row)}
+              title="Service config overrides for this identity"
+              aria-label={`Config overrides for ${row.name}`}
+              className="p-1.5 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)] text-[var(--ac-muted)] hover:text-[var(--ac-ink)] cursor-pointer"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+            </button>
             {!row.isDefaultAdmin && (
               <button
                 type="button"
@@ -481,60 +444,12 @@ export const IdentitiesPage: React.FC<{
         </ModalDialog>
       )}
 
-      {/* Create / Edit Identity Modal */}
-      <ModalDialog
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        title={editing ? `Edit Identity: ${editing.name}` : 'Create Identity'}
-      >
-        <form onSubmit={handleSave} className="space-y-4 text-xs">
-          <label className="block space-y-1">
-            <span className="font-medium">Identity Name</span>
-            <input
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. jdoe-laptop or billing-db-host"
-              autoFocus
-              className="w-full px-3 py-2 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)] text-sm font-mono"
-            />
-          </label>
-
-          <label className="block space-y-1">
-            <span className="font-medium">Role Attributes (comma or space separated)</span>
-            <input
-              value={attrsText}
-              onChange={(e) => setAttrsText(e.target.value)}
-              placeholder="e.g. sales, employees, ssh-users"
-              className="w-full px-3 py-2 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)] text-sm font-mono"
-            />
-            <span className="block text-[11px] text-[var(--ac-muted)]">
-              Policies grant Dial or Bind access to these attributes (e.g. <code>#sales</code>).
-            </span>
-          </label>
-
-          <label className="flex items-center gap-2 pt-1 cursor-pointer">
-            <input type="checkbox" checked={isAdmin} onChange={(e) => setIsAdmin(e.target.checked)} />
-            <span className="font-medium">Grant full Edge Management Admin privileges</span>
-          </label>
-
-          <div className="flex justify-end gap-2 pt-3 border-t border-[var(--ac-line)]">
-            <button
-              type="button"
-              onClick={() => setModalOpen(false)}
-              className="px-4 py-2 rounded-lg border border-[var(--ac-line)] cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-2 rounded-lg bg-[var(--ac-dial)] text-white font-semibold cursor-pointer"
-            >
-              {editing ? 'Save Changes' : 'Create Identity'}
-            </button>
-          </div>
-        </form>
-      </ModalDialog>
+      {formFor !== undefined && (
+        <IdentityFormDialog editing={formFor} onClose={() => setFormFor(undefined)} onSaved={toastSuccess} />
+      )}
+      {overridesFor && (
+        <ConfigOverridesDialog identity={overridesFor} onClose={() => setOverridesFor(null)} onChanged={toastSuccess} />
+      )}
 
       {/* Enrollment Token & QR Code Modal */}
       {tokenModal && (
