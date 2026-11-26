@@ -62,6 +62,21 @@ describe('zitiService session handling', () => {
     expect(svc.isAuthenticated()).toBe(false);
   });
 
+  it('treats a 200 that is not API JSON as an error, not an empty list', async () => {
+    const svc = await freshService(signedIn);
+    // What a controller without the fabric binding returns: the console's index.html.
+    fetchMock.mockImplementation(async () => new Response('<!doctype html><html></html>', { status: 200, headers: { 'Content-Type': 'text/html' } }));
+    await expect(svc.listFabric('circuits')).rejects.toThrow(/does not serve the fabric API at this address/);
+    await expect(svc.list('identities')).rejects.toThrow(/did not return API data/);
+    expect(svc.isAuthenticated()).toBe(true);
+  });
+
+  it('still reads an empty list as empty', async () => {
+    const svc = await freshService(signedIn);
+    fetchMock.mockImplementation(async () => jsonResponse(200, { data: [], meta: { pagination: { totalCount: 0 } } }));
+    await expect(svc.listFabric('circuits')).resolves.toEqual([]);
+  });
+
   it('encodes entity ids in request paths', async () => {
     const svc = await freshService(signedIn);
     fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
