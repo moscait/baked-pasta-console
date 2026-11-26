@@ -1,6 +1,6 @@
 {
   "name": "baked-pasta-console",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Baked Pasta Console: a drop-in OpenZiti Admin Console with the Access Canvas and guided service wizards",
   "license": "Apache-2.0",
