@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AlertTriangle, Crosshair, MapPin, Pause, Play, RefreshCw, Save, Search, Undo2, X } from 'lucide-react';
+import { AlertTriangle, Crosshair, Download, MapPin, Pause, Play, RefreshCw, Save, Search, Undo2, X } from 'lucide-react';
+import { csvFileName, downloadText, toCsv } from '../components/csv';
 import { Link } from 'react-router-dom';
 import type { ApiSession, EdgeRouter, Identity, TransitRouter } from '../services/api-types';
 import { useServiceLoad } from '../components/state-hooks';
@@ -25,11 +26,14 @@ import {
   MapLink,
   MapNode,
   MapNodeKind,
+  RECENT_CIRCUIT_MS,
+  SeenCircuit,
   circuitLoad,
   circuitPath,
   circuitRouters,
   formatGeolocation,
   matchesLocationQuery,
+  mergeCircuitHistory,
   normalizeCircuit,
   normalizeLink,
   parseCoordinates,
@@ -39,7 +43,16 @@ import {
 
 type ToastFn = (level: 'info' | 'success' | 'warning' | 'error', title: string, detail?: string) => void;
 
-const LIVE_REFRESH_MS = 15000;
+/** Circuits last as long as one connection, so poll often while the page is visible. */
+const LIVE_REFRESH_MS = 5000;
+
+/**
+ * Circuit history outlives the page component (switching to another page and back keeps it),
+ * but belongs to one controller session: it resets on sign-in/out, demo toggle or new controller.
+ */
+let historyCache: { key: string; seen: Map<string, SeenCircuit> } = { key: '', seen: new Map() };
+const historyKey = () => `${zitiService.isAuthenticated()}|${zitiService.isDemoMode()}|${zitiService.getSettings().selectedEdgeController}`;
+const cachedHistory = () => (historyCache.key === historyKey() ? historyCache.seen : new Map<string, SeenCircuit>());
 
 const KIND_COLLECTION: Record<MapNodeKind, 'identities' | 'edge-routers' | 'transit-routers'> = {
   identity: 'identities',
@@ -70,6 +83,9 @@ function age(iso: string | null): string {
   return `${Math.floor(s / 86400)}d`;
 }
 
+/** Age of a millisecond timestamp, in the same style as `age`. */
+const ago = (ms: number) => age(new Date(ms).toISOString()) || '0s';
+
 /**
  * Network Map: routers and identities placed by their `geolocation` tag, fabric links coloured
  * by latency, and live circuits drawn client -> routers -> host. Locations can be placed or
@@ -84,6 +100,8 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
     null,
   );
   const [fabricError, setFabricError] = useState('');
+  const [history, setHistory] = useState<Map<string, SeenCircuit>>(cachedHistory);
+  const [showRecent, setShowRecent] = useState(true);
   const [loadedAt, setLoadedAt] = useState<Date | null>(null);
   const [live, setLive] = useState(true);
 
@@ -144,6 +162,11 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
       ]),
     ([routers, links, circuits]) => {
       setFabric({ routers, links, circuits });
+      setHistory((prev) => {
+        const seen = mergeCircuitHistory(prev, circuits.map((c) => normalizeCircuit(c)), Date.now());
+        historyCache = { key: historyKey(), seen };
+        return seen;
+      });
       setFabricError('');
       setLoadedAt(new Date());
     },
@@ -159,7 +182,10 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
 
   useEffect(() => {
     if (!live) return;
-    const t = setInterval(loadFabric, LIVE_REFRESH_MS);
+    // Skip polls while the tab is hidden; circuits that end meanwhile are caught on return.
+    const t = setInterval(() => {
+      if (!document.hidden) loadFabric();
+    }, LIVE_REFRESH_MS);
     return () => clearInterval(t);
   }, [live, loadFabric]);
 
@@ -227,6 +253,12 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
     [fabric],
   );
   const load = useMemo(() => circuitLoad(circuits), [circuits]);
+  /** Circuits seen earlier that have since ended, most recently seen first. */
+  const recent = useMemo(
+    () => [...history.values()].filter((h) => h.endedBy !== null).sort((a, b) => b.lastSeen - a.lastSeen),
+    [history],
+  );
+  const recentById = useMemo(() => new Map(recent.map((h) => [h.circuit.id, h])), [recent]);
   /** Each identity's client IP, from its most recently active API session. */
   const ipOf = useMemo(() => {
     const latest = new Map<string, { ip: string; at: string }>();
@@ -244,7 +276,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
   const routerNodes = [...nodes.values()].filter((n) => n.kind !== 'identity');
   const routersOnline = routerNodes.filter((n) => n.online).length;
   const linksUp = links.filter((l) => l.up).length;
-  const selected = circuits.find((c) => c.id === selectedCircuit) || null;
+  const selected = circuits.find((c) => c.id === selectedCircuit) || recentById.get(selectedCircuit || '')?.circuit || null;
   const selectedPath = selected ? circuitPath(selected, nodes) : null;
 
   // ---------------------------------------------------------------- Leaflet map
@@ -336,6 +368,23 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
     const drawCircuit = (c: MapCircuit, emphasis: boolean) => {
       const p = circuitPath(c, nodes);
       if (p.points.length < 2) return;
+      const ended = recentById.get(c.id);
+      if (ended) {
+        // Ended: a faint, still line under the live ones.
+        L.polyline(p.points, {
+          className: 'bpc-circuit ended',
+          weight: emphasis ? 4 : 2.5,
+          opacity: emphasis ? 0.9 : 0.55,
+          dashArray: '2 6',
+        })
+          .on('click', () => setSelectedCircuit(c.id))
+          .bindTooltip(
+            `${escapeHtml(c.serviceName)}: ${escapeHtml(nameOf(c.clientId))} → ${escapeHtml(nameOf(c.hostId))}<br>ended, last seen ${ago(ended.lastSeen)} ago`,
+            { sticky: true },
+          )
+          .addTo(layers.circuits);
+        return;
+      }
       // A light casing under the line keeps circuits distinct from (green) healthy links.
       L.polyline(p.points, { className: 'bpc-circuit-halo', weight: emphasis ? 10 : 6, opacity: 0.9, interactive: false }).addTo(
         layers.circuits,
@@ -354,7 +403,10 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
         .addTo(layers.circuits);
     };
     if (selected) drawCircuit(selected, true);
-    else circuits.forEach((c) => drawCircuit(c, false));
+    else {
+      if (showRecent) recent.forEach((h) => drawCircuit(h.circuit, false));
+      circuits.forEach((c) => drawCircuit(c, false));
+    }
 
     const inSelected = new Set(selected ? [selected.clientId, ...selected.routerIds, selected.hostId] : []);
     // Identities in a circuit or with unsaved edits always show; idle ones can be hidden to declutter.
@@ -410,7 +462,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
         fittedRef.current = true;
       }
     }
-  }, [nodes, links, circuits, selected, showLinks, showIdleIdentities, editMode, load, pending, nameOf, ipOf]);
+  }, [nodes, links, circuits, recent, recentById, showRecent, selected, showLinks, showIdleIdentities, editMode, load, pending, nameOf, ipOf]);
 
   useEffect(() => {
     if (selectedPath && selectedPath.points.length && mapRef.current) {
@@ -560,11 +612,34 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
   // ---------------------------------------------------------------- render
 
   const q = query.trim().toLowerCase();
-  const circuitRows = circuits.filter(
-    (c) =>
-      !q ||
-      [c.serviceName, nameOf(c.clientId), nameOf(c.hostId), ...c.routerIds.map(nameOf)].join(' ').toLowerCase().includes(q),
-  );
+  const matchesCircuit = (c: MapCircuit) =>
+    !q || [c.serviceName, nameOf(c.clientId), nameOf(c.hostId), ...c.routerIds.map(nameOf)].join(' ').toLowerCase().includes(q);
+  const circuitRows = circuits.filter(matchesCircuit);
+  const recentRows = showRecent ? recent.filter((h) => matchesCircuit(h.circuit)) : [];
+
+  const exportCircuits = () => {
+    const iso = (ms: number | null) => (ms === null ? '' : new Date(ms).toISOString());
+    const row = (c: MapCircuit, status: string, lastSeen: number | null, endedBy: number | null) => [
+      status,
+      c.serviceName,
+      nameOf(c.clientId),
+      nameOf(c.hostId),
+      c.routerIds.map(nameOf).join(' > '),
+      c.createdAt || '',
+      iso(lastSeen),
+      iso(endedBy),
+      c.id,
+    ];
+    const now = Date.now();
+    const rows = [
+      ...circuits.map((c) => row(c, 'active', history.get(c.id)?.lastSeen ?? now, null)),
+      ...recent.map((h) => row(h.circuit, 'ended', h.lastSeen, h.endedBy)),
+    ];
+    downloadText(
+      csvFileName('circuits'),
+      toCsv(['Status', 'Service', 'Client', 'Host', 'Path', 'Started', 'Last seen', 'Ended by', 'Circuit ID'], rows),
+    );
+  };
   const locationRows = [...nodes.values()]
     .filter((n) => (!unplacedOnly || !n.point || n.approxVia) && matchesLocationQuery(n, q))
     .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'identity' ? 1 : -1));
@@ -583,14 +658,51 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
     setEditMode(true);
   };
 
+  const renderCircuit = (c: MapCircuit, ended: SeenCircuit | null) => {
+    const isSel = c.id === selectedCircuit;
+    const path = isSel ? selectedPath : null;
+    return (
+      <li key={c.id}>
+        <button
+          type="button"
+          onClick={() => setSelectedCircuit(isSel ? null : c.id)}
+          aria-pressed={isSel}
+          className={`w-full text-left px-3 py-2.5 space-y-1 cursor-pointer ${
+            isSel ? 'bg-[var(--ac-dial-soft)]' : 'hover:bg-[var(--ac-surface-2)]'
+          } ${ended && !isSel ? 'opacity-70' : ''}`}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold font-mono">{c.serviceName}</span>
+            <span className="text-[var(--ac-muted)]">
+              {ended ? `ended · seen ${ago(ended.lastSeen)} ago` : age(c.createdAt)}
+            </span>
+          </div>
+          <div>
+            <span className="font-mono">{nameOf(c.clientId)}</span>
+            <span className="text-[var(--ac-muted)]"> → </span>
+            <span className="font-mono">{nameOf(c.hostId)}</span>
+          </div>
+          <div className="text-[var(--ac-muted)] font-mono text-[11px]">
+            via {c.routerIds.length ? c.routerIds.map(nameOf).join(' › ') : 'unknown routers'}
+          </div>
+          {path && path.missing.length > 0 && (
+            <div className="text-[11px] text-[var(--ac-pending)]">
+              Not on the map: {path.missing.map((m) => m.name).join(', ')}. Place them under Locations.
+            </div>
+          )}
+        </button>
+      </li>
+    );
+  };
+
   return (
     <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold tracking-tight m-0">Network Map</h1>
           <p className="text-xs text-[var(--ac-muted)] m-0">
-            Routers and identities placed by their <code>geolocation</code> tag, fabric links by latency, and live
-            circuits from client to host.
+            Routers and identities placed by their <code>geolocation</code> tag, fabric links by latency, and live and
+            recent circuits from client to host.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -604,6 +716,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
               </span>
               <span className="px-2.5 py-1 rounded-lg bg-[var(--ac-surface)] border border-[var(--ac-line)]">
                 Circuits <strong>{circuits.length}</strong>
+                {recent.length > 0 && <span className="text-[var(--ac-muted)]"> · {recent.length} recent</span>}
               </span>
             </>
           )}
@@ -662,6 +775,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
             </span>
             <span className="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-[var(--ac-surface)] border border-[var(--ac-line)] shadow">
               <span className="inline-flex items-center gap-1"><i className="bpc-legend-line bpc-legend-circuit" />circuit</span>
+              <span className="inline-flex items-center gap-1"><i className="bpc-legend-line" style={{ background: 'var(--ac-muted)', opacity: 0.6 }} />ended</span>
               <span className="inline-flex items-center gap-1"><i className="bpc-legend-line" style={{ background: LEVEL_VAR.good }} />&lt;50 ms</span>
               <span className="inline-flex items-center gap-1"><i className="bpc-legend-line" style={{ background: LEVEL_VAR.warn }} />≤100 ms</span>
               <span className="inline-flex items-center gap-1"><i className="bpc-legend-line" style={{ background: LEVEL_VAR.bad }} />slow / down</span>
@@ -738,7 +852,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
                   tab === t ? 'text-[var(--ac-dial)] border-b-2 border-[var(--ac-dial)]' : 'text-[var(--ac-muted)]'
                 }`}
               >
-                {t === 'circuits' ? `Circuits (${circuits.length})` : `Locations${pending.size ? ` · ${pending.size} unsaved` : ''}`}
+                {t === 'circuits' ? `Circuits (${circuits.length}${recent.length ? ` + ${recent.length} recent` : ''})` : `Locations${pending.size ? ` · ${pending.size} unsaved` : ''}`}
               </button>
             ))}
           </div>
@@ -751,6 +865,27 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
               placeholder={tab === 'circuits' ? 'Filter by service, identity or router…' : 'Filter by name or #attribute…'}
               className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)]"
             />
+            {tab === 'circuits' && (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label
+                  className="inline-flex items-center gap-1.5 cursor-pointer"
+                  title={`Circuits that ended in the last ${RECENT_CIRCUIT_MS / 60000} minutes while this console was open`}
+                >
+                  <input type="checkbox" checked={showRecent} onChange={(e) => setShowRecent(e.target.checked)} />
+                  Recent ({RECENT_CIRCUIT_MS / 60000} min)
+                </label>
+                <button
+                  type="button"
+                  disabled={!circuits.length && !recent.length}
+                  onClick={exportCircuits}
+                  title="Active and recent circuits as CSV"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--ac-line)] bg-[var(--ac-surface-2)] cursor-pointer disabled:opacity-50"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>Export CSV</span>
+                </button>
+              </div>
+            )}
             {tab === 'locations' && (
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <label className="inline-flex items-center gap-1.5 cursor-pointer">
@@ -882,46 +1017,23 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
 
           <div className="flex-1 min-h-0 overflow-y-auto max-h-[60vh] lg:max-h-none">
             {tab === 'circuits' ? (
-              circuitRows.length ? (
+              circuitRows.length || recentRows.length ? (
                 <ul className="m-0 p-0 list-none divide-y divide-[var(--ac-line)]">
-                  {circuitRows.map((c) => {
-                    const isSel = c.id === selectedCircuit;
-                    const path = isSel ? selectedPath : null;
-                    return (
-                      <li key={c.id}>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedCircuit(isSel ? null : c.id)}
-                          aria-pressed={isSel}
-                          className={`w-full text-left px-3 py-2.5 space-y-1 cursor-pointer ${
-                            isSel ? 'bg-[var(--ac-dial-soft)]' : 'hover:bg-[var(--ac-surface-2)]'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-semibold font-mono">{c.serviceName}</span>
-                            <span className="text-[var(--ac-muted)]">{age(c.createdAt)}</span>
-                          </div>
-                          <div>
-                            <span className="font-mono">{nameOf(c.clientId)}</span>
-                            <span className="text-[var(--ac-muted)]"> → </span>
-                            <span className="font-mono">{nameOf(c.hostId)}</span>
-                          </div>
-                          <div className="text-[var(--ac-muted)] font-mono text-[11px]">
-                            via {c.routerIds.length ? c.routerIds.map(nameOf).join(' › ') : 'unknown routers'}
-                          </div>
-                          {path && path.missing.length > 0 && (
-                            <div className="text-[11px] text-[var(--ac-pending)]">
-                              Not on the map: {path.missing.map((m) => m.name).join(', ')}. Place them under Locations.
-                            </div>
-                          )}
-                        </button>
-                      </li>
-                    );
-                  })}
+                  {circuitRows.map((c) => renderCircuit(c, null))}
+                  {recentRows.length > 0 && (
+                    <li className="px-3 py-1.5 text-[10.5px] font-bold uppercase tracking-wider text-[var(--ac-muted)] bg-[var(--ac-surface-2)]">
+                      Recent · ended in the last {RECENT_CIRCUIT_MS / 60000} min
+                    </li>
+                  )}
+                  {recentRows.map((h) => renderCircuit(h.circuit, h))}
                 </ul>
               ) : (
                 <p className="m-0 p-4 text-[var(--ac-muted)]">
-                  {fabric ? (q ? 'No circuits match.' : 'No active circuits right now.') : 'Circuits need the fabric API.'}
+                  {!fabric
+                    ? 'Circuits need the fabric API.'
+                    : q
+                      ? 'No circuits match.'
+                      : `No active circuits. A circuit exists only while a connection is open (one per connection), so traffic shows up here as it happens and stays listed for ${RECENT_CIRCUIT_MS / 60000} minutes after it ends, while this console is open.`}
                 </p>
               )
             ) : (

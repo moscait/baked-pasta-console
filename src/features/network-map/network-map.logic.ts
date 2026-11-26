@@ -319,3 +319,35 @@ export function parseCoordinates(text: string): GeoPoint | null {
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
   return { lat, lng };
 }
+
+/** How long an ended circuit stays on the map as "recent". */
+export const RECENT_CIRCUIT_MS = 10 * 60 * 1000;
+
+export interface SeenCircuit {
+  circuit: MapCircuit;
+  /** When a refresh last saw it active (ms since epoch). */
+  lastSeen: number;
+  /** Set once a refresh no longer lists it; it ended between lastSeen and this time. */
+  endedBy: number | null;
+}
+
+/**
+ * Folds one fabric refresh into the circuit history: active circuits are (re)marked live,
+ * circuits that disappeared are marked ended, and ended ones older than `windowMs` are dropped.
+ * Circuits are short-lived (one per connection), so without this most traffic is never seen.
+ */
+export function mergeCircuitHistory(
+  prev: Map<string, SeenCircuit>,
+  active: MapCircuit[],
+  now: number,
+  windowMs = RECENT_CIRCUIT_MS,
+): Map<string, SeenCircuit> {
+  const next = new Map<string, SeenCircuit>();
+  for (const c of active) next.set(c.id, { circuit: c, lastSeen: now, endedBy: null });
+  for (const [id, seen] of prev) {
+    if (next.has(id)) continue;
+    const ended = seen.endedBy ?? now;
+    if (now - ended <= windowMs) next.set(id, { ...seen, endedBy: ended });
+  }
+  return next;
+}

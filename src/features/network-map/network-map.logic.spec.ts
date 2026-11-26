@@ -8,6 +8,7 @@ import {
   formatGeolocation,
   latencyLevel,
   matchesLocationQuery,
+  mergeCircuitHistory,
   normalizeCircuit,
   normalizeLink,
   parseCoordinates,
@@ -219,5 +220,32 @@ describe('typed coordinates', () => {
     for (const t of ['Ashburn, VA', 'Paris', '95, 10', '10, 200', '1,2,3', '']) {
       expect(parseCoordinates(t)).toBeNull();
     }
+  });
+});
+
+describe('circuit history', () => {
+  const c = (id: string) => ({ id, serviceId: 's', serviceName: 's', clientId: 'a', hostId: 'b', routerIds: ['r'], linkIds: [], createdAt: null });
+
+  it('marks circuits that disappear as ended, keeping when they were last seen', () => {
+    let h = mergeCircuitHistory(new Map(), [c('x'), c('y')], 1000);
+    h = mergeCircuitHistory(h, [c('y')], 6000);
+    expect(h.get('x')).toMatchObject({ lastSeen: 1000, endedBy: 6000 });
+    expect(h.get('y')).toMatchObject({ lastSeen: 6000, endedBy: null });
+  });
+
+  it('keeps the first time a circuit was found ended, and drops it after the window', () => {
+    let h = mergeCircuitHistory(new Map(), [c('x')], 0);
+    h = mergeCircuitHistory(h, [], 5000, 60000);
+    h = mergeCircuitHistory(h, [], 30000, 60000);
+    expect(h.get('x')?.endedBy).toBe(5000);
+    h = mergeCircuitHistory(h, [], 65001, 60000);
+    expect(h.has('x')).toBe(false);
+  });
+
+  it('revives a circuit that is listed again', () => {
+    let h = mergeCircuitHistory(new Map(), [c('x')], 0);
+    h = mergeCircuitHistory(h, [], 5000);
+    h = mergeCircuitHistory(h, [c('x')], 10000);
+    expect(h.get('x')).toMatchObject({ lastSeen: 10000, endedBy: null });
   });
 });
