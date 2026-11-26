@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   MapNode,
+  SPREAD_PX,
   circuitLoad,
+  circuitRouters,
   circuitPath,
   formatGeolocation,
   latencyLevel,
+  matchesLocationQuery,
   normalizeCircuit,
   normalizeLink,
   parseGeolocation,
+  spreadOffsets,
 } from './network-map.logic';
 
 describe('geolocation tags', () => {
@@ -100,6 +104,8 @@ describe('circuit paths', () => {
     kind: 'edge-router',
     online: true,
     point,
+    approxVia: null,
+    attributes: [],
     tags: {},
   });
   const nodes = new Map<string, MapNode>([
@@ -129,5 +135,73 @@ describe('circuit paths', () => {
     expect(load.get('r1')).toBe(2);
     expect(load.get('alice')).toBe(2);
     expect(load.get('r2')).toBe(1);
+  });
+});
+
+describe('approximate identity locations', () => {
+  const c = (id: string, clientId: string | null, hostId: string | null, routerIds: string[]) =>
+    ({ id, serviceId: 's', serviceName: 's', clientId, hostId, routerIds, linkIds: [], createdAt: null });
+
+  it('uses the first hop for clients and the last hop for hosts', () => {
+    const via = circuitRouters([c('c1', 'alice', 'host', ['r-in', 'r-core', 'r-out'])]);
+    expect(via.get('alice')).toBe('r-in');
+    expect(via.get('host')).toBe('r-out');
+  });
+
+  it('keeps the first (newest) circuit per identity and skips circuits without routers', () => {
+    const via = circuitRouters([c('new', 'alice', null, ['r-new']), c('old', 'alice', null, ['r-old']), c('none', 'bob', null, [])]);
+    expect(via.get('alice')).toBe('r-new');
+    expect(via.has('bob')).toBe(false);
+  });
+});
+
+describe('spreading co-located markers', () => {
+  const at = { lat: 10, lng: 20 };
+
+  it('leaves a lone marker on its point', () => {
+    expect(spreadOffsets([{ id: 'a', point: at }]).get('a')).toEqual([0, 0]);
+  });
+
+  it('keeps the hub centred and rings the rest at SPREAD_PX', () => {
+    const off = spreadOffsets([
+      { id: 'i1', point: at },
+      { id: 'router', point: { lat: 10.000001, lng: 20 }, center: true },
+      { id: 'i2', point: at },
+    ]);
+    expect(off.get('router')).toEqual([0, 0]);
+    expect(off.get('i1')).toEqual([0, -SPREAD_PX]); // 12 o'clock first
+    expect(off.get('i2')).toEqual([0, SPREAD_PX]);
+  });
+
+  it('rings a group with no hub and leaves other points alone', () => {
+    const off = spreadOffsets([
+      { id: 'a', point: at },
+      { id: 'b', point: at },
+      { id: 'far', point: { lat: -10, lng: 20 } },
+    ]);
+    expect(off.get('a')).not.toEqual(off.get('b'));
+    expect(off.get('far')).toEqual([0, 0]);
+  });
+
+  it('widens the ring for large groups so neighbours do not overlap', () => {
+    const items = Array.from({ length: 20 }, (_, i) => ({ id: `n${i}`, point: at }));
+    const [x0, y0] = spreadOffsets(items).get('n0')!;
+    const [x1, y1] = spreadOffsets(items).get('n1')!;
+    expect(Math.hypot(x1 - x0, y1 - y0)).toBeGreaterThanOrEqual(SPREAD_PX - 1);
+  });
+});
+
+describe('location filter', () => {
+  const n = { name: 'Alice-MacBook', attributes: ['nyc-office', 'sales'] };
+
+  it('matches names case-insensitively', () => {
+    expect(matchesLocationQuery(n, 'macbook')).toBe(true);
+    expect(matchesLocationQuery(n, 'bob')).toBe(false);
+    expect(matchesLocationQuery(n, '  ')).toBe(true);
+  });
+
+  it('matches #attributes against role attributes only', () => {
+    expect(matchesLocationQuery(n, '#nyc')).toBe(true);
+    expect(matchesLocationQuery(n, '#alice')).toBe(false);
   });
 });

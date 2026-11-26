@@ -583,6 +583,11 @@ dialog::backdrop {
   outline: 3px solid var(--ac-dial);
   outline-offset: 1px;
 }
+/* Drawn at its router because it has no location of its own. */
+.bpc-pin.approx {
+  border-style: dashed;
+  opacity: 0.8;
+}
 .bpc-pin.edited {
   border-style: dashed;
   border-color: var(--ac-pending);

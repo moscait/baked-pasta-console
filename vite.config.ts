@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { configDefaults, defineConfig, type Plugin } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { MAP_TILE_ORIGIN } from './src/features/network-map/map-tiles';
+import { MAP_TILE_ORIGIN } from './src/features/network-map/map-tiles.ts';
 
 /**
  * Adds a Content-Security-Policy <meta> to the production index.html. The console keeps the

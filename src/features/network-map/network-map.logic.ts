@@ -198,7 +198,14 @@ export interface MapNode {
   kind: MapNodeKind;
   /** Online/connected now; null when unknown. */
   online: boolean | null;
+  /** Where the node is drawn: its own location, or (when `approxVia` is set) its router's. */
   point: GeoPoint | null;
+  /**
+   * Set for an identity with no location of its own that is drawn at the router it reaches the
+   * fabric through (see `circuitRouters`). Display only: nothing is written to the controller.
+   */
+  approxVia: string | null;
+  attributes: string[];
   tags: Record<string, unknown>;
 }
 
@@ -231,4 +238,65 @@ export function circuitLoad(circuits: MapCircuit[]): Map<string, number> {
     }
   }
   return load;
+}
+
+/**
+ * The router each identity reaches the fabric through, from its circuits: the first hop for a
+ * dialing client, the last for a hosting identity. Circuits are taken in the order given (newest
+ * first), and the first circuit seen for an identity wins.
+ */
+export function circuitRouters(circuits: MapCircuit[]): Map<string, string> {
+  const via = new Map<string, string>();
+  for (const c of circuits) {
+    if (!c.routerIds.length) continue;
+    if (c.clientId && !via.has(c.clientId)) via.set(c.clientId, c.routerIds[0]);
+    if (c.hostId && !via.has(c.hostId)) via.set(c.hostId, c.routerIds[c.routerIds.length - 1]);
+  }
+  return via;
+}
+
+/** Spacing between markers spread around a shared point, in screen pixels. */
+export const SPREAD_PX = 26;
+
+/**
+ * Screen-pixel offsets that fan out markers drawn at the same point (identities placed together,
+ * or drawn approximately at their router) so each stays visible and clickable. In a group, the
+ * first `center` item stays on the point and the rest ring around it; lone markers get [0, 0].
+ */
+export function spreadOffsets(items: { id: string; point: GeoPoint; center?: boolean }[]): Map<string, [number, number]> {
+  const groups = new Map<string, typeof items>();
+  for (const it of items) {
+    const key = `${it.point.lat.toFixed(5)},${it.point.lng.toFixed(5)}`;
+    const g = groups.get(key);
+    if (g) g.push(it);
+    else groups.set(key, [it]);
+  }
+  const out = new Map<string, [number, number]>();
+  for (const g of groups.values()) {
+    const hub = g.find((it) => it.center);
+    if (hub) out.set(hub.id, [0, 0]);
+    const ring = g.filter((it) => it !== hub);
+    if (!hub && ring.length === 1) {
+      out.set(ring[0].id, [0, 0]);
+      continue;
+    }
+    // Large groups get a wider ring so neighbours stay SPREAD_PX apart.
+    const radius = Math.max(SPREAD_PX, (ring.length * SPREAD_PX) / (2 * Math.PI));
+    ring.forEach((it, i) => {
+      const angle = -Math.PI / 2 + (2 * Math.PI * i) / ring.length; // from 12 o'clock, clockwise
+      out.set(it.id, [Math.round(radius * Math.cos(angle)), Math.round(radius * Math.sin(angle))]);
+    });
+  }
+  return out;
+}
+
+/** Location-list filter: `#text` matches role attributes, anything else the name. */
+export function matchesLocationQuery(n: Pick<MapNode, 'name' | 'attributes'>, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (q.startsWith('#')) {
+    const attr = q.slice(1);
+    return n.attributes.some((a) => a.toLowerCase().includes(attr));
+  }
+  return n.name.toLowerCase().includes(q);
 }
