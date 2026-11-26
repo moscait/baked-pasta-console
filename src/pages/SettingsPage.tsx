@@ -100,13 +100,7 @@ export const SettingsPage: React.FC<{
             type="button"
             onClick={() => {
               const url = controllerUrl.trim().replace(/\/+$/, '');
-              let valid = false;
-              try {
-                valid = ['https:', 'http:'].includes(new URL(url).protocol);
-              } catch {
-                valid = false;
-              }
-              if (!valid) {
+              if (!URL.canParse(url) || !['https:', 'http:'].includes(new URL(url).protocol)) {
                 onToast('error', 'Invalid controller URL', 'Use a full URL such as https://controller.example.com:1280');
                 return;
               }

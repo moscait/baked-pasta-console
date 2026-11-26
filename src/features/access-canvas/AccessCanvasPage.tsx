@@ -353,7 +353,7 @@ export const AccessCanvasPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) =>
                 ? `${zitiService.errorText(err)}. Rolling back also failed: ${zitiService.describeRevertFailures(failures)}`
                 : `${zitiService.errorText(err)}. Nothing was kept.`;
               onToast('error', 'Failed to apply wizard', msg);
-              throw new Error(msg);
+              throw new Error(msg, { cause: err });
             } finally {
               await reload();
             }
