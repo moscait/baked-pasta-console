@@ -620,6 +620,9 @@ dialog::backdrop {
 .bpc-circuit {
   stroke: var(--ac-bind);
 }
+.bpc-circuit.ended {
+  stroke: var(--ac-muted);
+}
 .bpc-circuit-halo {
   stroke: var(--ac-surface);
 }
