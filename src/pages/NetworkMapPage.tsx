@@ -5,6 +5,7 @@ import { AlertTriangle, Crosshair, MapPin, Pause, Play, RefreshCw, Save, Undo2, 
 import type { EdgeRouter, Identity, TransitRouter } from '../services/api-types';
 import { useServiceLoad } from '../components/state-hooks';
 import { zitiService } from '../services/ziti-service';
+import { MAP_TILE_URL } from '../features/network-map/map-tiles';
 import {
   FabricCircuit,
   FabricLink,
@@ -203,8 +204,8 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
   useEffect(() => {
     if (!mapDiv.current || mapRef.current) return;
     const map = L.map(mapDiv.current, { worldCopyJump: true, minZoom: 2, zoomControl: true }).setView([30, 0], 2);
-    // Same tile source as the upstream console's Geolocate map.
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
+    // MAP_TILE_ORIGIN is allowed by the production CSP (vite.config.ts).
+    L.tileLayer(MAP_TILE_URL, {
       attribution: 'Tiles &copy; <a href="https://www.esri.com/">Esri</a>',
       maxZoom: 19,
     }).addTo(map);

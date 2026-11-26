@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { configDefaults, defineConfig, type Plugin } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { MAP_TILE_ORIGIN } from './src/features/network-map/map-tiles';
 
 /**
  * Adds a Content-Security-Policy <meta> to the production index.html. The console keeps the
@@ -25,7 +26,8 @@ function contentSecurityPolicy(): Plugin {
           `script-src 'self' ${scriptHashes.join(' ')}`.trim(),
           // React Flow and the canvas position elements with inline style attributes.
           "style-src 'self' 'unsafe-inline'",
-          "img-src 'self' data: blob:",
+          // The Network Map's basemap tiles are <img> elements loaded from the tile server.
+          `img-src 'self' data: blob: ${MAP_TILE_ORIGIN}`,
           "font-src 'self' data:",
           // The admin may point the console at any controller URL; controllers serve HTTPS.
           "connect-src 'self' https:",
