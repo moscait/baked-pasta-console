@@ -203,6 +203,9 @@ export const LoginPage: React.FC<{
             <span>Launch Interactive Demo Sandbox (No Controller Required)</span>
           </button>
         </form>
+        <div className="px-6 pb-4 text-center text-[11px] font-mono text-[var(--ac-muted)]">
+          Baked Pasta Console v{__APP_VERSION__}
+        </div>
       </div>
     </div>
   );

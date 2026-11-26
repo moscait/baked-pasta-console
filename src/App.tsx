@@ -269,7 +269,7 @@ const AppShell: React.FC = () => {
                   <span>baked </span>
                   <span className="text-[var(--ac-bind)]">pasta</span>
                 </div>
-                <div className="text-[11px] text-[var(--ac-muted)] font-mono">console · openziti</div>
+                <div className="text-[11px] text-[var(--ac-muted)] font-mono">console v{__APP_VERSION__} · openziti</div>
               </div>
             </Link>
           </div>
