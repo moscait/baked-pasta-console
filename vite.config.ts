@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { configDefaults, defineConfig, type Plugin } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -42,8 +43,16 @@ function contentSecurityPolicy(): Plugin {
   };
 }
 
+const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as {
+  version: string;
+};
+
 export default defineConfig({
   base: './',
+  define: {
+    // Shown in the sidebar and on the login screen; the release workflow ties tags to this.
+    __APP_VERSION__: JSON.stringify(version),
+  },
   plugins: [react(), tailwindcss(), contentSecurityPolicy()],
   build: {
     target: 'esnext',
