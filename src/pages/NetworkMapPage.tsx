@@ -2,11 +2,20 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AlertTriangle, Crosshair, MapPin, Pause, Play, RefreshCw, Save, Search, Undo2, X } from 'lucide-react';
-import type { EdgeRouter, Identity, TransitRouter } from '../services/api-types';
+import { Link } from 'react-router-dom';
+import type { ApiSession, EdgeRouter, Identity, TransitRouter } from '../services/api-types';
 import { useServiceLoad } from '../components/state-hooks';
 import { zitiService } from '../services/ziti-service';
 import { MAP_TILE_URL } from '../features/network-map/map-tiles';
 import { PlaceResult, searchPlaces } from '../features/network-map/geocode';
+import {
+  IpLookupError,
+  IpPlace,
+  demoLookupPrefix,
+  getIpGeoKey,
+  lookupPrefix,
+  truncateIp,
+} from '../features/network-map/ip-geolocation';
 import {
   FabricCircuit,
   FabricLink,
@@ -70,6 +79,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
   const [identities, setIdentities] = useState<Identity[]>([]);
   const [edgeRouters, setEdgeRouters] = useState<EdgeRouter[]>([]);
   const [transitRouters, setTransitRouters] = useState<TransitRouter[]>([]);
+  const [apiSessions, setApiSessions] = useState<ApiSession[]>([]);
   const [fabric, setFabric] = useState<{ routers: FabricRouter[]; links: FabricLink[]; circuits: FabricCircuit[] } | null>(
     null,
   );
@@ -93,6 +103,11 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
   const [pending, setPending] = useState<Map<string, GeoPoint | null>>(() => new Map());
   const [saving, setSaving] = useState(false);
 
+  /** IP suggestions applied this session: identity id -> the prefix sent and the place found. */
+  const [ipSuggested, setIpSuggested] = useState<Map<string, { prefix: string; place: IpPlace }>>(() => new Map());
+  const [ipBusy, setIpBusy] = useState<{ done: number; total: number } | null>(null);
+  const ipAbort = useRef<AbortController | null>(null);
+
   const [placeQuery, setPlaceQuery] = useState('');
   const [placeResults, setPlaceResults] = useState<PlaceResult[] | null>(null);
   const [placeBusy, setPlaceBusy] = useState(false);
@@ -105,11 +120,14 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
         zitiService.list('identities'),
         zitiService.list('edge-routers'),
         zitiService.list('transit-routers').catch(() => [] as TransitRouter[]),
+        // Only for showing client IPs and IP-based suggestions; the map works without them.
+        zitiService.list('api-sessions').catch(() => [] as ApiSession[]),
       ]),
-    ([ids, ers, trs]) => {
+    ([ids, ers, trs, sess]) => {
       setIdentities(ids);
       setEdgeRouters(ers);
       setTransitRouters(trs);
+      setApiSessions(sess);
     },
     (err) => onToast('error', 'Failed to load the network', zitiService.errorText(err)),
   );
@@ -208,6 +226,18 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
     [fabric],
   );
   const load = useMemo(() => circuitLoad(circuits), [circuits]);
+  /** Each identity's client IP, from its most recently active API session. */
+  const ipOf = useMemo(() => {
+    const latest = new Map<string, { ip: string; at: string }>();
+    for (const s of apiSessions) {
+      const id = s.identityId || s.identity?.id;
+      if (!id || !s.ipAddress) continue;
+      const at = s.lastActivityAt || s.updatedAt || s.createdAt || '';
+      const prev = latest.get(id);
+      if (!prev || at > prev.at) latest.set(id, { ip: s.ipAddress, at });
+    }
+    return new Map([...latest].map(([id, v]) => [id, v.ip]));
+  }, [apiSessions]);
   const nameOf = useCallback((id: string | null) => (id ? nodes.get(id)?.name || id : '—'), [nodes]);
 
   const routerNodes = [...nodes.values()].filter((n) => n.kind !== 'identity');
@@ -358,7 +388,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
         .bindTooltip(
           `<strong>${escapeHtml(n.name)}</strong><br>${n.kind.replace('-', ' ')} · ${
             n.online === true ? 'online' : n.online === false ? 'offline' : 'status unknown'
-          }${count ? `<br>${count} circuit${count === 1 ? '' : 's'}` : ''}${
+          }${ipOf.has(n.id) ? `<br>IP ${escapeHtml(ipOf.get(n.id)!)}` : ''}${count ? `<br>${count} circuit${count === 1 ? '' : 's'}` : ''}${
             n.approxVia ? `<br><em>Approximate: no location set, shown at ${escapeHtml(nameOf(n.approxVia))}</em>` : ''
           }`,
         )
@@ -379,7 +409,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
         fittedRef.current = true;
       }
     }
-  }, [nodes, links, circuits, selected, showLinks, showAllIdentities, editMode, load, pending, nameOf]);
+  }, [nodes, links, circuits, selected, showLinks, showAllIdentities, editMode, load, pending, nameOf, ipOf]);
 
   useEffect(() => {
     if (selectedPath && selectedPath.points.length && mapRef.current) {
@@ -427,6 +457,76 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
 
   useEffect(() => () => placeAbort.current?.abort(), []);
 
+  // ---------------------------------------------------------------- IP suggestions
+
+  const demo = zitiService.isDemoMode();
+  const ipKey = getIpGeoKey();
+  /** Identities without a location of their own that have a client IP, with what would be sent. */
+  const ipCandidates = useMemo(() => {
+    const out: { node: MapNode; ip: string; prefix: string | null }[] = [];
+    for (const n of nodes.values()) {
+      if (n.kind !== 'identity' || (n.point && !n.approxVia) || pending.has(n.id)) continue;
+      const ip = ipOf.get(n.id);
+      if (!ip) continue;
+      const t = truncateIp(ip, demo);
+      out.push({ node: n, ip, prefix: 'prefix' in t ? t.prefix : null });
+    }
+    return out;
+  }, [nodes, pending, ipOf, demo]);
+  const lookupable = ipCandidates.filter((c) => c.prefix);
+  const prefixCount = new Set(lookupable.map((c) => c.prefix)).size;
+
+  const suggestFromIp = async () => {
+    const ctrl = new AbortController();
+    ipAbort.current = ctrl;
+    const prefixes = [...new Set(lookupable.map((c) => c.prefix!))];
+    const found = new Map<string, IpPlace>();
+    const problems: string[] = [];
+    setIpBusy({ done: 0, total: prefixes.length });
+    // One lookup per prefix, one at a time: identities on the same network share a result.
+    for (const [i, prefix] of prefixes.entries()) {
+      if (ctrl.signal.aborted) break;
+      try {
+        found.set(prefix, demo ? await demoLookupPrefix(prefix) : await lookupPrefix(prefix, ipKey, ctrl.signal));
+      } catch (err) {
+        if (ctrl.signal.aborted) break;
+        problems.push(`${prefix}: ${err instanceof Error ? err.message : String(err)}`);
+        if (err instanceof IpLookupError && err.fatal) break; // bad key or quota: stop spending requests
+      }
+      setIpBusy({ done: i + 1, total: prefixes.length });
+    }
+    setIpBusy(null);
+    const applied = lookupable.filter((c) => found.has(c.prefix!));
+    setPending((prev) => {
+      const next = new Map(prev);
+      for (const c of applied) {
+        const p = found.get(c.prefix!)!;
+        next.set(c.node.id, { lat: p.lat, lng: p.lng });
+      }
+      return next;
+    });
+    setIpSuggested((prev) => {
+      const next = new Map(prev);
+      for (const c of applied) next.set(c.node.id, { prefix: c.prefix!, place: found.get(c.prefix!)! });
+      return next;
+    });
+    const skipped = ipCandidates.length - lookupable.length;
+    const detail = [
+      applied.length ? `${applied.length} unsaved location${applied.length === 1 ? '' : 's'} to review.` : '',
+      skipped ? `${skipped} skipped (private or non-public IP, never sent).` : '',
+      problems.length ? `Not found: ${problems.join('; ')}` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    onToast(
+      applied.length ? (problems.length ? 'warning' : 'success') : 'error',
+      applied.length ? 'Suggested from IP' : 'No IP suggestions',
+      detail,
+    );
+  };
+
+  useEffect(() => () => ipAbort.current?.abort(), []);
+
   // ---------------------------------------------------------------- saving locations
 
   const saveLocations = async () => {
@@ -451,6 +551,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
     await loadEntities();
     // Keep only the edits that failed, so they can be retried.
     setPending((prev) => new Map([...prev].filter(([id]) => !done.has(id))));
+    setIpSuggested((prev) => new Map([...prev].filter(([id]) => !done.has(id))));
     if (failures.length) onToast('error', `Saved ${saved}, ${failures.length} failed`, failures.join('; '));
     else onToast('success', 'Locations saved', `${saved} location${saved === 1 ? '' : 's'} written to the controller as tags.`);
   };
@@ -706,6 +807,48 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
                 )}
               </div>
             )}
+            {tab === 'locations' && ipCandidates.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 p-2 rounded-lg bg-[var(--ac-surface-2)] border border-[var(--ac-line)]">
+                {ipKey || demo ? (
+                  <>
+                    <span className="text-[var(--ac-muted)]">
+                      {ipBusy
+                        ? `Looking up ${ipBusy.done}/${ipBusy.total}…`
+                        : prefixCount
+                          ? `${ipCandidates.length} unplaced with an IP · ${prefixCount} lookup${prefixCount === 1 ? '' : 's'}${demo ? ' (simulated)' : ''}`
+                          : `${ipCandidates.length} unplaced, private IP only (can't be looked up)`}
+                    </span>
+                    {!prefixCount ? null : ipBusy ? (
+                      <button
+                        type="button"
+                        onClick={() => ipAbort.current?.abort()}
+                        className="px-2 py-1 rounded-md border border-[var(--ac-line)] cursor-pointer"
+                      >
+                        Stop
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={suggestFromIp}
+                        title="Sends only the first three octets (IPv4) or 48 bits (IPv6) of each address to ipgeolocation.io"
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--ac-dial)] text-white font-semibold cursor-pointer disabled:opacity-50"
+                      >
+                        <Crosshair className="w-3 h-3" />
+                        <span>Suggest from IP</span>
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-[var(--ac-muted)]">
+                    {ipCandidates.length} unplaced with an IP. Add an ipgeolocation.io key in{' '}
+                    <Link to="/settings" className="text-[var(--ac-dial)]">
+                      Settings
+                    </Link>{' '}
+                    to suggest locations from IP.
+                  </span>
+                )}
+              </div>
+            )}
             {pending.size > 0 && (
               <div className="flex items-center gap-2">
                 <button
@@ -720,7 +863,10 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
                 <button
                   type="button"
                   disabled={saving}
-                  onClick={() => setPending(new Map())}
+                  onClick={() => {
+                    setPending(new Map());
+                    setIpSuggested(new Map());
+                  }}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--ac-line)] cursor-pointer"
                 >
                   <Undo2 className="w-3.5 h-3.5" />
@@ -807,6 +953,17 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
                             'Not placed'
                           )}
                         </div>
+                        {ipOf.has(n.id) && (
+                          <div className="text-[11px] text-[var(--ac-muted)] font-mono">
+                            IP {ipOf.get(n.id)}
+                            {ipSuggested.has(n.id) && (
+                              <span className="text-[var(--ac-pending)]">
+                                {' '}
+                                · sent {ipSuggested.get(n.id)!.prefix} → {ipSuggested.get(n.id)!.place.label}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-1 flex-none">

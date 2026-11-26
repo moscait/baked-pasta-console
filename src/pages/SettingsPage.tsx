@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { zitiService } from '../services/ziti-service';
-import { Monitor, Moon, RotateCcw, Server, Sun } from 'lucide-react';
+import { MapPin, Monitor, Moon, RotateCcw, Server, Sun } from 'lucide-react';
+import { getIpGeoKey, setIpGeoKey } from '../features/network-map/ip-geolocation';
 
 type ThemeSetting = 'light dark' | 'light' | 'dark';
 
@@ -16,6 +17,9 @@ export const SettingsPage: React.FC<{
       return 'light dark';
     }
   });
+
+  const [ipKeySaved, setIpKeySaved] = useState(() => !!getIpGeoKey());
+  const [ipKeyDraft, setIpKeyDraft] = useState('');
 
   useEffect(() => {
     const meta = document.querySelector('meta[name="color-scheme"]') as HTMLMetaElement | null;
@@ -133,6 +137,72 @@ export const SettingsPage: React.FC<{
               <span>Reset Demo Data</span>
             </button>
           </div>
+        )}
+      </section>
+
+      {/* Optional IP geolocation for the Network Map */}
+      <section className="p-5 rounded-2xl border border-[var(--ac-line)] bg-[var(--ac-surface)] space-y-3 text-xs">
+        <div className="space-y-1">
+          <h2 className="text-sm font-semibold m-0 flex items-center gap-2">
+            <MapPin className="w-4 h-4 text-[var(--ac-dial)]" />
+            <span>Network Map: suggest locations from IP (optional)</span>
+          </h2>
+          <p className="text-[var(--ac-muted)] m-0">
+            With an <a href="https://ipgeolocation.io/" target="_blank" rel="noreferrer" className="text-[var(--ac-dial)]">ipgeolocation.io</a>{' '}
+            API key, the Network Map can suggest where unplaced identities are from the IP of their latest API session.
+            Only the first three octets (IPv4) or 48 bits (IPv6) are sent; private addresses are never sent. Suggestions
+            stay unsaved until you review and save them. Results reflect where traffic leaves the network, so VPN and
+            mobile users may show the VPN or carrier location.
+          </p>
+          <p className="text-[var(--ac-muted)] m-0">
+            The key is stored in this browser only (not on the controller), so each admin uses their own. It is sent to
+            ipgeolocation.io with each lookup.
+          </p>
+        </div>
+        {ipKeySaved ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="px-3 py-2 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)] font-mono">
+              Key saved in this browser ••••••••
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setIpGeoKey('');
+                setIpKeySaved(false);
+                onToast('info', 'IP geolocation key removed', 'Removed from this browser.');
+              }}
+              className="px-3.5 py-2 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface)] font-medium cursor-pointer hover:border-[var(--ac-bad)] hover:text-[var(--ac-bad)]"
+            >
+              Remove key
+            </button>
+          </div>
+        ) : (
+          <form
+            className="flex flex-wrap gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!ipKeyDraft.trim()) return;
+              setIpGeoKey(ipKeyDraft);
+              const ok = !!getIpGeoKey();
+              setIpKeySaved(ok);
+              setIpKeyDraft('');
+              if (ok) onToast('success', 'IP geolocation key saved', 'Use "Suggest from IP" in the Network Map\'s Locations tab.');
+              else onToast('error', 'Could not save the key', 'This browser is blocking site storage.');
+            }}
+          >
+            <input
+              type="password"
+              autoComplete="off"
+              value={ipKeyDraft}
+              onChange={(e) => setIpKeyDraft(e.target.value)}
+              placeholder="ipgeolocation.io API key"
+              aria-label="ipgeolocation.io API key"
+              className="flex-1 min-w-64 px-3 py-2 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)] font-mono text-xs"
+            />
+            <button type="submit" className="px-4 py-2 rounded-lg bg-[var(--ac-dial)] text-white font-semibold cursor-pointer">
+              Save key
+            </button>
+          </form>
         )}
       </section>
 
