@@ -110,7 +110,6 @@ export function createInitialDemoStore(): RawDemoStore {
       },
       {
         id: 'id-alice',
-        tags: { geolocation: '40.71280,-74.00600' },
         name: 'alice-macbook',
         typeId: 'Default',
         type: { name: 'Default' },

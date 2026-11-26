@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AlertTriangle, Crosshair, MapPin, Pause, Play, RefreshCw, Save, Undo2, X } from 'lucide-react';
+import { AlertTriangle, Crosshair, MapPin, Pause, Play, RefreshCw, Save, Search, Undo2, X } from 'lucide-react';
 import type { EdgeRouter, Identity, TransitRouter } from '../services/api-types';
 import { useServiceLoad } from '../components/state-hooks';
 import { zitiService } from '../services/ziti-service';
 import { MAP_TILE_URL } from '../features/network-map/map-tiles';
+import { PlaceResult, searchPlaces } from '../features/network-map/geocode';
 import {
   FabricCircuit,
   FabricLink,
@@ -17,10 +18,14 @@ import {
   MapNodeKind,
   circuitLoad,
   circuitPath,
+  circuitRouters,
   formatGeolocation,
+  matchesLocationQuery,
   normalizeCircuit,
   normalizeLink,
+  parseCoordinates,
   parseGeolocation,
+  spreadOffsets,
 } from '../features/network-map/network-map.logic';
 
 type ToastFn = (level: 'info' | 'success' | 'warning' | 'error', title: string, detail?: string) => void;
@@ -80,10 +85,19 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
   const [unplacedOnly, setUnplacedOnly] = useState(false);
 
   const [editMode, setEditMode] = useState(false);
-  const [placing, setPlacing] = useState<MapNode | null>(null);
+  /** Nodes the next map click will place (one from its row, or a bulk selection). */
+  const [placing, setPlacing] = useState<MapNode[]>([]);
+  /** Location rows ticked for bulk placement. */
+  const [checked, setChecked] = useState<Set<string>>(() => new Set());
   /** Unsaved location edits: id -> new point, or null to clear the location. */
   const [pending, setPending] = useState<Map<string, GeoPoint | null>>(() => new Map());
   const [saving, setSaving] = useState(false);
+
+  const [placeQuery, setPlaceQuery] = useState('');
+  const [placeResults, setPlaceResults] = useState<PlaceResult[] | null>(null);
+  const [placeBusy, setPlaceBusy] = useState(false);
+  const [placeError, setPlaceError] = useState('');
+  const placeAbort = useRef<AbortController | null>(null);
 
   const loadEntities = useServiceLoad(
     () =>
@@ -132,8 +146,14 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
 
   // ---------------------------------------------------------------- derived model
 
+  const circuits: MapCircuit[] = useMemo(
+    () => (fabric?.circuits || []).map((c) => normalizeCircuit(c)).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')),
+    [fabric],
+  );
+
   const nodes = useMemo(() => {
     const map = new Map<string, MapNode>();
+    const via = circuitRouters(circuits);
     const fabricRouter = new Map((fabric?.routers || []).map((r) => [r.id, r]));
     const pointOf = (id: string, tags?: Record<string, unknown>) =>
       pending.has(id) ? pending.get(id)! : parseGeolocation(tags?.geolocation);
@@ -145,6 +165,8 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
         kind: 'transit-router',
         online: f ? !!f.connected : r.isOnline ?? null,
         point: pointOf(r.id, r.tags),
+        approxVia: null,
+        attributes: [], // transit routers have no role attributes
         tags: r.tags || {},
       });
     }
@@ -156,27 +178,31 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
         kind: 'edge-router',
         online: f ? !!f.connected : r.isOnline ?? null,
         point: pointOf(r.id, r.tags),
+        approxVia: null,
+        attributes: r.roleAttributes || [],
         tags: r.tags || {},
       });
     }
     for (const i of identities) {
       if (map.has(i.id)) continue; // a router's own identity shares its id
+      const own = pointOf(i.id, i.tags);
+      // No location of its own: draw it at the router its circuits enter through, if that is placed.
+      const viaId = !own && !pending.has(i.id) ? via.get(i.id) : undefined;
+      const viaPoint = viaId ? map.get(viaId)?.point || null : null;
       map.set(i.id, {
         id: i.id,
         name: i.name,
         kind: 'identity',
         online: i.hasEdgeRouterConnection ?? null,
-        point: pointOf(i.id, i.tags),
+        point: own || viaPoint,
+        approxVia: viaPoint ? viaId! : null,
+        attributes: i.roleAttributes || [],
         tags: i.tags || {},
       });
     }
     return map;
-  }, [identities, edgeRouters, transitRouters, fabric, pending]);
+  }, [identities, edgeRouters, transitRouters, fabric, circuits, pending]);
 
-  const circuits: MapCircuit[] = useMemo(
-    () => (fabric?.circuits || []).map((c) => normalizeCircuit(c)).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')),
-    [fabric],
-  );
   const links: MapLink[] = useMemo(
     () => (fabric?.links || []).map(normalizeLink).filter((l): l is MapLink => !!l),
     [fabric],
@@ -196,10 +222,24 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<{ links: L.LayerGroup; circuits: L.LayerGroup; markers: L.LayerGroup } | null>(null);
   const fittedRef = useRef(false);
-  const placingRef = useRef<MapNode | null>(null);
+  const placingRef = useRef<MapNode[]>([]);
   useEffect(() => {
     placingRef.current = placing;
   }, [placing]);
+
+  /** Gives every node waiting to be placed this location. False when nothing is being placed. */
+  const placeAt = useCallback((point: GeoPoint) => {
+    const targets = placingRef.current;
+    if (!targets.length) return false;
+    setPending((prev) => {
+      const next = new Map(prev);
+      for (const t of targets) next.set(t.id, point);
+      return next;
+    });
+    setPlacing([]);
+    setChecked(new Set());
+    return true;
+  }, []);
 
   useEffect(() => {
     if (!mapDiv.current || mapRef.current) return;
@@ -215,10 +255,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
       markers: L.layerGroup().addTo(map),
     };
     map.on('click', (e: L.LeafletMouseEvent) => {
-      const target = placingRef.current;
-      if (!target) return;
-      setPending((prev) => new Map(prev).set(target.id, e.latlng));
-      setPlacing(null);
+      placeAt({ lat: e.latlng.lat, lng: e.latlng.lng });
     });
     mapRef.current = map;
     // The container is sized by flex layout; let Leaflet measure it after first paint.
@@ -229,10 +266,10 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
       mapRef.current = null;
       layersRef.current = null;
     };
-  }, []);
+  }, [placeAt]);
 
   useEffect(() => {
-    mapDiv.current?.classList.toggle('bpc-map-placing', !!placing);
+    mapDiv.current?.classList.toggle('bpc-map-placing', placing.length > 0);
   }, [placing]);
 
   useEffect(() => {
@@ -289,10 +326,15 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
     else circuits.forEach((c) => drawCircuit(c, false));
 
     const inSelected = new Set(selected ? [selected.clientId, ...selected.routerIds, selected.hostId] : []);
-    for (const n of nodes.values()) {
-      if (!n.point) continue;
-      // Identities are many; by default show only those taking part in a circuit (or edited).
-      if (n.kind === 'identity' && !showAllIdentities && !load.has(n.id) && !pending.has(n.id)) continue;
+    // Identities are many; by default show only those taking part in a circuit (or edited).
+    const visible = [...nodes.values()].filter(
+      (n): n is MapNode & { point: GeoPoint } =>
+        !!n.point && (n.kind !== 'identity' || showAllIdentities || load.has(n.id) || pending.has(n.id)),
+    );
+    // Markers sharing a point (a router and the identities drawn at it, or a bulk placement) fan out.
+    const offsets = spreadOffsets(visible.map((n) => ({ id: n.id, point: n.point, center: n.kind !== 'identity' })));
+    for (const n of visible) {
+      const [dx, dy] = offsets.get(n.id) || [0, 0];
       const count = load.get(n.id) || 0;
       const cls = [
         'bpc-pin',
@@ -300,6 +342,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
         n.online === true ? 'on' : n.online === false ? 'off' : '',
         inSelected.has(n.id) ? 'hl' : '',
         pending.has(n.id) ? 'edited' : '',
+        n.approxVia ? 'approx' : '',
       ].join(' ');
       const marker = L.marker(n.point, {
         draggable: editMode,
@@ -308,18 +351,22 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
           className: 'bpc-map-marker',
           html: `<span class="${cls}">${KIND_LETTER[n.kind]}</span>${count ? `<b class="bpc-pin-count">${count}</b>` : ''}`,
           iconSize: [24, 24],
-          iconAnchor: [12, 12],
+          iconAnchor: [12 - dx, 12 - dy],
+          tooltipAnchor: [dx, dy],
         }),
       })
         .bindTooltip(
           `<strong>${escapeHtml(n.name)}</strong><br>${n.kind.replace('-', ' ')} · ${
             n.online === true ? 'online' : n.online === false ? 'offline' : 'status unknown'
-          }${count ? `<br>${count} circuit${count === 1 ? '' : 's'}` : ''}`,
+          }${count ? `<br>${count} circuit${count === 1 ? '' : 's'}` : ''}${
+            n.approxVia ? `<br><em>Approximate: no location set, shown at ${escapeHtml(nameOf(n.approxVia))}</em>` : ''
+          }`,
         )
         .addTo(layers.markers);
       if (editMode) {
         marker.on('dragend', () => {
-          const ll = marker.getLatLng();
+          // The marker's latlng is its anchor; the pin the user dropped sits (dx, dy) pixels from it.
+          const ll = map.layerPointToLatLng(map.latLngToLayerPoint(marker.getLatLng()).add([dx, dy]));
           setPending((prev) => new Map(prev).set(n.id, { lat: ll.lat, lng: ll.lng }));
         });
       }
@@ -341,6 +388,44 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
     // Only re-fit when the selection changes, not on every live refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCircuit]);
+
+  // ---------------------------------------------------------------- typed locations
+
+  /** Places the waiting nodes at a typed location, or just shows it when nothing is waiting. */
+  const goTo = (point: GeoPoint) => {
+    placeAt(point);
+    setPlaceResults(null);
+    mapRef.current?.setView(point, Math.max(mapRef.current.getZoom(), 9));
+  };
+
+  const searchPlace = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = placeQuery.trim();
+    if (!text) return;
+    setPlaceError('');
+    const coords = parseCoordinates(text);
+    if (coords) {
+      goTo(coords);
+      return;
+    }
+    placeAbort.current?.abort();
+    const ctrl = new AbortController();
+    placeAbort.current = ctrl;
+    setPlaceBusy(true);
+    try {
+      const found = await searchPlaces(text, ctrl.signal);
+      setPlaceResults(found);
+      if (!found.length) setPlaceError(`No places found for "${text}".`);
+    } catch (err) {
+      if (ctrl.signal.aborted) return;
+      setPlaceResults(null);
+      setPlaceError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (placeAbort.current === ctrl) setPlaceBusy(false);
+    }
+  };
+
+  useEffect(() => () => placeAbort.current?.abort(), []);
 
   // ---------------------------------------------------------------- saving locations
 
@@ -379,9 +464,22 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
       [c.serviceName, nameOf(c.clientId), nameOf(c.hostId), ...c.routerIds.map(nameOf)].join(' ').toLowerCase().includes(q),
   );
   const locationRows = [...nodes.values()]
-    .filter((n) => (!unplacedOnly || !n.point) && (!q || n.name.toLowerCase().includes(q)))
+    .filter((n) => (!unplacedOnly || !n.point || n.approxVia) && matchesLocationQuery(n, q))
     .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'identity' ? 1 : -1));
   const LOCATION_CAP = 300;
+  const shownRows = locationRows.slice(0, LOCATION_CAP);
+  const allShownChecked = shownRows.length > 0 && shownRows.every((n) => checked.has(n.id));
+  const toggleChecked = (id: string) =>
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const startPlacing = (targets: MapNode[]) => {
+    setPlacing(targets);
+    setEditMode(true);
+  };
 
   return (
     <div className="flex flex-col gap-4 flex-1 min-h-0">
@@ -441,7 +539,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
       <div className="flex flex-col lg:flex-row gap-4 flex-1 min-h-[520px]">
         <div className="relative flex-1 min-h-[420px] rounded-2xl overflow-hidden border border-[var(--ac-line)]">
           <div ref={mapDiv} className="absolute inset-0 bpc-map" aria-label="Network map" />
-          <div className="absolute left-14 top-3 z-[500] flex flex-wrap gap-1.5 text-[11px]">
+          <div className="absolute left-14 top-12 right-3 sm:top-3 sm:right-[19.5rem] z-[500] flex flex-wrap gap-1.5 text-[11px] pointer-events-none [&>*]:pointer-events-auto">
             <label className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[var(--ac-surface)] border border-[var(--ac-line)] shadow cursor-pointer">
               <input type="checkbox" checked={showLinks} onChange={(e) => setShowLinks(e.target.checked)} />
               Links
@@ -454,6 +552,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
               <span className="inline-flex items-center gap-1"><span className="bpc-pin small edge-router on">E</span>edge</span>
               <span className="inline-flex items-center gap-1"><span className="bpc-pin small transit-router on">T</span>transit</span>
               <span className="inline-flex items-center gap-1"><span className="bpc-pin small identity on">I</span>identity</span>
+              <span className="inline-flex items-center gap-1"><span className="bpc-pin small identity on approx">I</span>approx.</span>
               <span className="inline-flex items-center gap-1"><span className="bpc-pin small edge-router off">E</span>offline</span>
             </span>
             <span className="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-[var(--ac-surface)] border border-[var(--ac-line)] shadow">
@@ -463,13 +562,60 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
               <span className="inline-flex items-center gap-1"><i className="bpc-legend-line" style={{ background: LEVEL_VAR.bad }} />slow / down</span>
             </span>
           </div>
-          {placing && (
+          <div className="absolute right-3 top-3 z-[600] w-72 max-w-[calc(100%-4.5rem)] text-[11.5px]">
+            <form
+              onSubmit={searchPlace}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[var(--ac-surface)] border border-[var(--ac-line)] shadow"
+            >
+              <Search className="w-3.5 h-3.5 flex-none text-[var(--ac-muted)]" />
+              <input
+                type="search"
+                value={placeQuery}
+                onChange={(e) => {
+                  setPlaceQuery(e.target.value);
+                  setPlaceError('');
+                  if (!e.target.value) setPlaceResults(null);
+                }}
+                placeholder={placing.length ? 'Place at: city, address or lat,lng' : 'Go to: city, address or lat,lng'}
+                aria-label="Find a place or coordinates"
+                className="flex-1 min-w-0 bg-transparent py-0.5 outline-none"
+              />
+              {placeBusy && <span className="text-[var(--ac-muted)]">…</span>}
+            </form>
+            {(placeResults?.length || placeError) && (
+              <div className="mt-1 rounded-lg bg-[var(--ac-surface)] border border-[var(--ac-line)] shadow-lg overflow-hidden">
+                {placeError && <p className="m-0 px-2.5 py-2 text-[var(--ac-muted)]">{placeError}</p>}
+                {placeResults && placeResults.length > 0 && (
+                  <>
+                    <ul className="m-0 p-0 list-none divide-y divide-[var(--ac-line)]">
+                      {placeResults.map((r) => (
+                        <li key={`${r.lat},${r.lng},${r.name}`}>
+                          <button
+                            type="button"
+                            onClick={() => goTo(r)}
+                            className="w-full text-left px-2.5 py-1.5 hover:bg-[var(--ac-surface-2)] cursor-pointer"
+                          >
+                            {r.name}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="m-0 px-2.5 py-1 text-[10px] text-[var(--ac-muted)] border-t border-[var(--ac-line)]">
+                      Search © OpenStreetMap contributors
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+          {placing.length > 0 && (
             <div className="absolute left-1/2 -translate-x-1/2 bottom-4 z-[500] flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--ac-ink)] text-[var(--ac-surface)] text-xs shadow-xl">
               <Crosshair className="w-3.5 h-3.5" />
               <span>
-                Click the map to place <strong>{placing.name}</strong>
+                Click the map or search above to place{' '}
+                <strong>{placing.length === 1 ? placing[0].name : `${placing.length} selected`}</strong>
               </span>
-              <button type="button" onClick={() => setPlacing(null)} aria-label="Cancel placing" className="cursor-pointer">
+              <button type="button" onClick={() => setPlacing([])} aria-label="Cancel placing" className="cursor-pointer">
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -497,7 +643,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={tab === 'circuits' ? 'Filter by service, identity or router…' : 'Filter by name…'}
+              placeholder={tab === 'circuits' ? 'Filter by service, identity or router…' : 'Filter by name or #attribute…'}
               className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--ac-line)] bg-[var(--ac-surface-2)]"
             />
             {tab === 'locations' && (
@@ -512,11 +658,52 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
                     checked={editMode}
                     onChange={(e) => {
                       setEditMode(e.target.checked);
-                      if (!e.target.checked) setPlacing(null);
+                      if (!e.target.checked) setPlacing([]);
                     }}
                   />
                   Drag markers to move
                 </label>
+              </div>
+            )}
+            {tab === 'locations' && (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allShownChecked}
+                    disabled={!shownRows.length}
+                    onChange={() =>
+                      setChecked((prev) => {
+                        const next = new Set(prev);
+                        for (const n of shownRows) {
+                          if (allShownChecked) next.delete(n.id);
+                          else next.add(n.id);
+                        }
+                        return next;
+                      })
+                    }
+                  />
+                  Select all shown ({shownRows.length})
+                </label>
+                {checked.size > 0 && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => startPlacing([...checked].map((id) => nodes.get(id)).filter((n): n is MapNode => !!n))}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--ac-dial)] text-white font-semibold cursor-pointer"
+                    >
+                      <MapPin className="w-3 h-3" />
+                      <span>Place {checked.size} selected</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setChecked(new Set())}
+                      className="px-2 py-1 rounded-md border border-[var(--ac-line)] cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  </span>
+                )}
               </div>
             )}
             {pending.size > 0 && (
@@ -589,34 +776,50 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
               )
             ) : (
               <ul className="m-0 p-0 list-none divide-y divide-[var(--ac-line)]">
-                {locationRows.slice(0, LOCATION_CAP).map((n) => (
+                {shownRows.map((n) => (
                   <li key={n.id} className="px-3 py-2 flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className={`bpc-pin small ${n.kind} ${n.online ? 'on' : n.online === false ? 'off' : ''}`}>
-                          {KIND_LETTER[n.kind]}
-                        </span>
-                        <span className="font-mono font-semibold truncate">{n.name}</span>
-                        {pending.has(n.id) && <span className="text-[10px] text-[var(--ac-pending)] font-semibold">unsaved</span>}
-                      </div>
-                      <div className="text-[11px] text-[var(--ac-muted)] font-mono">
-                        {n.point ? formatGeolocation(n.point) : 'Not placed'}
+                    <div className="min-w-0 flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={checked.has(n.id)}
+                        onChange={() => toggleChecked(n.id)}
+                        aria-label={`Select ${n.name}`}
+                        className="mt-0.5 flex-none"
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`bpc-pin small ${n.kind} ${n.online ? 'on' : n.online === false ? 'off' : ''} ${
+                              n.approxVia ? 'approx' : ''
+                            }`}
+                          >
+                            {KIND_LETTER[n.kind]}
+                          </span>
+                          <span className="font-mono font-semibold truncate">{n.name}</span>
+                          {pending.has(n.id) && <span className="text-[10px] text-[var(--ac-pending)] font-semibold">unsaved</span>}
+                        </div>
+                        <div className="text-[11px] text-[var(--ac-muted)] font-mono">
+                          {n.approxVia ? (
+                            <em>≈ at {nameOf(n.approxVia)} (not saved)</em>
+                          ) : n.point ? (
+                            formatGeolocation(n.point)
+                          ) : (
+                            'Not placed'
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-1 flex-none">
                       <button
                         type="button"
-                        onClick={() => {
-                          setPlacing(n);
-                          setEditMode(true);
-                        }}
+                        onClick={() => startPlacing([n])}
                         title="Click the map to set this location"
                         className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--ac-line)] bg-[var(--ac-surface-2)] cursor-pointer"
                       >
                         <MapPin className="w-3 h-3" />
-                        <span>{n.point ? 'Move' : 'Place'}</span>
+                        <span>{n.point && !n.approxVia ? 'Move' : 'Place'}</span>
                       </button>
-                      {n.point && (
+                      {n.point && !n.approxVia && (
                         <button
                           type="button"
                           onClick={() => setPending((prev) => new Map(prev).set(n.id, null))}
