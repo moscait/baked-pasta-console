@@ -90,7 +90,8 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
   const [tab, setTab] = useState<'circuits' | 'locations'>('circuits');
   const [selectedCircuit, setSelectedCircuit] = useState<string | null>(null);
   const [showLinks, setShowLinks] = useState(true);
-  const [showAllIdentities, setShowAllIdentities] = useState(false);
+  /** Show placed identities that are not in a circuit right now. Off declutters large networks. */
+  const [showIdleIdentities, setShowIdleIdentities] = useState(true);
   const [query, setQuery] = useState('');
   const [unplacedOnly, setUnplacedOnly] = useState(false);
 
@@ -356,10 +357,10 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
     else circuits.forEach((c) => drawCircuit(c, false));
 
     const inSelected = new Set(selected ? [selected.clientId, ...selected.routerIds, selected.hostId] : []);
-    // Identities are many; by default show only those taking part in a circuit (or edited).
+    // Identities in a circuit or with unsaved edits always show; idle ones can be hidden to declutter.
     const visible = [...nodes.values()].filter(
       (n): n is MapNode & { point: GeoPoint } =>
-        !!n.point && (n.kind !== 'identity' || showAllIdentities || load.has(n.id) || pending.has(n.id)),
+        !!n.point && (n.kind !== 'identity' || showIdleIdentities || load.has(n.id) || pending.has(n.id)),
     );
     // Markers sharing a point (a router and the identities drawn at it, or a bulk placement) fan out.
     const offsets = spreadOffsets(visible.map((n) => ({ id: n.id, point: n.point, center: n.kind !== 'identity' })));
@@ -409,7 +410,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
         fittedRef.current = true;
       }
     }
-  }, [nodes, links, circuits, selected, showLinks, showAllIdentities, editMode, load, pending, nameOf, ipOf]);
+  }, [nodes, links, circuits, selected, showLinks, showIdleIdentities, editMode, load, pending, nameOf, ipOf]);
 
   useEffect(() => {
     if (selectedPath && selectedPath.points.length && mapRef.current) {
@@ -645,9 +646,12 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
               <input type="checkbox" checked={showLinks} onChange={(e) => setShowLinks(e.target.checked)} />
               Links
             </label>
-            <label className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[var(--ac-surface)] border border-[var(--ac-line)] shadow cursor-pointer">
-              <input type="checkbox" checked={showAllIdentities} onChange={(e) => setShowAllIdentities(e.target.checked)} />
-              All identities
+            <label
+              title="Placed identities that are not in an active circuit"
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[var(--ac-surface)] border border-[var(--ac-line)] shadow cursor-pointer"
+            >
+              <input type="checkbox" checked={showIdleIdentities} onChange={(e) => setShowIdleIdentities(e.target.checked)} />
+              Idle identities
             </label>
             <span className="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-[var(--ac-surface)] border border-[var(--ac-line)] shadow">
               <span className="inline-flex items-center gap-1"><span className="bpc-pin small edge-router on">E</span>edge</span>
