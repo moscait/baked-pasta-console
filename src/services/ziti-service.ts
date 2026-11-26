@@ -105,6 +105,20 @@ const DEFAULT_SETTINGS: ZitiSettings = {
   demoMode: false,
 };
 
+/**
+ * The rows of a list response. A 200 without a `data` array is not an empty list: it usually
+ * means something else answered the path (the console's own index.html when the controller does
+ * not serve that API on this address), so it is an error rather than "nothing found".
+ */
+function listRows<T>(json: ApiEnvelope<T[]> | null, failure: string, api: string): T[] {
+  if (json && Array.isArray(json.data)) return json.data;
+  const hint =
+    api === 'fabric/v1'
+      ? 'the controller does not serve the fabric API at this address (add "binding: fabric" to its web listener)'
+      : `the controller did not return API data for /${api}`;
+  throw new Error(`${failure}: ${hint}.`);
+}
+
 function base64UrlEncode(bytes: Uint8Array): string {
   let binary = '';
   bytes.forEach((b) => (binary += String.fromCharCode(b)));
@@ -737,7 +751,7 @@ class ZitiServiceImpl {
         `${collection}?limit=${limit}&offset=${page * limit}`,
         `Failed to load ${collection}`,
       );
-      const rows = json?.data || [];
+      const rows = listRows(json, `Failed to load ${collection}`, 'edge/management/v1');
       out.push(...rows);
       const total = json?.meta?.pagination?.totalCount;
       if (rows.length < limit || (typeof total === 'number' && out.length >= total)) break;
@@ -914,7 +928,7 @@ class ZitiServiceImpl {
         undefined,
         'fabric/v1',
       );
-      const rows = json?.data || [];
+      const rows = listRows(json, `Failed to load fabric ${collection}`, 'fabric/v1');
       out.push(...rows);
       const total = json?.meta?.pagination?.totalCount;
       if (rows.length < limit || (typeof total === 'number' && out.length >= total)) return out;
