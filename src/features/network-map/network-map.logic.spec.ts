@@ -10,6 +10,7 @@ import {
   matchesLocationQuery,
   normalizeCircuit,
   normalizeLink,
+  parseCoordinates,
   parseGeolocation,
   spreadOffsets,
 } from './network-map.logic';
@@ -203,5 +204,20 @@ describe('location filter', () => {
   it('matches #attributes against role attributes only', () => {
     expect(matchesLocationQuery(n, '#nyc')).toBe(true);
     expect(matchesLocationQuery(n, '#alice')).toBe(false);
+  });
+});
+
+describe('typed coordinates', () => {
+  it('accepts comma, space and hemisphere forms', () => {
+    expect(parseCoordinates('39.04, -77.48')).toEqual({ lat: 39.04, lng: -77.48 });
+    expect(parseCoordinates('39.04 -77.48')).toEqual({ lat: 39.04, lng: -77.48 });
+    expect(parseCoordinates('33.87°S 151.21°E')).toEqual({ lat: -33.87, lng: 151.21 });
+    expect(parseCoordinates('39.04N, 77.48W')).toEqual({ lat: 39.04, lng: -77.48 });
+  });
+
+  it('returns null for place names and out-of-range values', () => {
+    for (const t of ['Ashburn, VA', 'Paris', '95, 10', '10, 200', '1,2,3', '']) {
+      expect(parseCoordinates(t)).toBeNull();
+    }
   });
 });

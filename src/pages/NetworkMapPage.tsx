@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AlertTriangle, Crosshair, MapPin, Pause, Play, RefreshCw, Save, Undo2, X } from 'lucide-react';
+import { AlertTriangle, Crosshair, MapPin, Pause, Play, RefreshCw, Save, Search, Undo2, X } from 'lucide-react';
 import type { EdgeRouter, Identity, TransitRouter } from '../services/api-types';
 import { useServiceLoad } from '../components/state-hooks';
 import { zitiService } from '../services/ziti-service';
 import { MAP_TILE_URL } from '../features/network-map/map-tiles';
+import { PlaceResult, searchPlaces } from '../features/network-map/geocode';
 import {
   FabricCircuit,
   FabricLink,
@@ -22,6 +23,7 @@ import {
   matchesLocationQuery,
   normalizeCircuit,
   normalizeLink,
+  parseCoordinates,
   parseGeolocation,
   spreadOffsets,
 } from '../features/network-map/network-map.logic';
@@ -90,6 +92,12 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
   /** Unsaved location edits: id -> new point, or null to clear the location. */
   const [pending, setPending] = useState<Map<string, GeoPoint | null>>(() => new Map());
   const [saving, setSaving] = useState(false);
+
+  const [placeQuery, setPlaceQuery] = useState('');
+  const [placeResults, setPlaceResults] = useState<PlaceResult[] | null>(null);
+  const [placeBusy, setPlaceBusy] = useState(false);
+  const [placeError, setPlaceError] = useState('');
+  const placeAbort = useRef<AbortController | null>(null);
 
   const loadEntities = useServiceLoad(
     () =>
@@ -219,6 +227,20 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
     placingRef.current = placing;
   }, [placing]);
 
+  /** Gives every node waiting to be placed this location. False when nothing is being placed. */
+  const placeAt = useCallback((point: GeoPoint) => {
+    const targets = placingRef.current;
+    if (!targets.length) return false;
+    setPending((prev) => {
+      const next = new Map(prev);
+      for (const t of targets) next.set(t.id, point);
+      return next;
+    });
+    setPlacing([]);
+    setChecked(new Set());
+    return true;
+  }, []);
+
   useEffect(() => {
     if (!mapDiv.current || mapRef.current) return;
     const map = L.map(mapDiv.current, { worldCopyJump: true, minZoom: 2, zoomControl: true }).setView([30, 0], 2);
@@ -233,16 +255,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
       markers: L.layerGroup().addTo(map),
     };
     map.on('click', (e: L.LeafletMouseEvent) => {
-      const targets = placingRef.current;
-      if (!targets.length) return;
-      const point = { lat: e.latlng.lat, lng: e.latlng.lng };
-      setPending((prev) => {
-        const next = new Map(prev);
-        for (const t of targets) next.set(t.id, point);
-        return next;
-      });
-      setPlacing([]);
-      setChecked(new Set());
+      placeAt({ lat: e.latlng.lat, lng: e.latlng.lng });
     });
     mapRef.current = map;
     // The container is sized by flex layout; let Leaflet measure it after first paint.
@@ -253,7 +266,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
       mapRef.current = null;
       layersRef.current = null;
     };
-  }, []);
+  }, [placeAt]);
 
   useEffect(() => {
     mapDiv.current?.classList.toggle('bpc-map-placing', placing.length > 0);
@@ -376,6 +389,44 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCircuit]);
 
+  // ---------------------------------------------------------------- typed locations
+
+  /** Places the waiting nodes at a typed location, or just shows it when nothing is waiting. */
+  const goTo = (point: GeoPoint) => {
+    placeAt(point);
+    setPlaceResults(null);
+    mapRef.current?.setView(point, Math.max(mapRef.current.getZoom(), 9));
+  };
+
+  const searchPlace = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = placeQuery.trim();
+    if (!text) return;
+    setPlaceError('');
+    const coords = parseCoordinates(text);
+    if (coords) {
+      goTo(coords);
+      return;
+    }
+    placeAbort.current?.abort();
+    const ctrl = new AbortController();
+    placeAbort.current = ctrl;
+    setPlaceBusy(true);
+    try {
+      const found = await searchPlaces(text, ctrl.signal);
+      setPlaceResults(found);
+      if (!found.length) setPlaceError(`No places found for "${text}".`);
+    } catch (err) {
+      if (ctrl.signal.aborted) return;
+      setPlaceResults(null);
+      setPlaceError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (placeAbort.current === ctrl) setPlaceBusy(false);
+    }
+  };
+
+  useEffect(() => () => placeAbort.current?.abort(), []);
+
   // ---------------------------------------------------------------- saving locations
 
   const saveLocations = async () => {
@@ -488,7 +539,7 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
       <div className="flex flex-col lg:flex-row gap-4 flex-1 min-h-[520px]">
         <div className="relative flex-1 min-h-[420px] rounded-2xl overflow-hidden border border-[var(--ac-line)]">
           <div ref={mapDiv} className="absolute inset-0 bpc-map" aria-label="Network map" />
-          <div className="absolute left-14 top-3 z-[500] flex flex-wrap gap-1.5 text-[11px]">
+          <div className="absolute left-14 top-12 right-3 sm:top-3 sm:right-[19.5rem] z-[500] flex flex-wrap gap-1.5 text-[11px] pointer-events-none [&>*]:pointer-events-auto">
             <label className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[var(--ac-surface)] border border-[var(--ac-line)] shadow cursor-pointer">
               <input type="checkbox" checked={showLinks} onChange={(e) => setShowLinks(e.target.checked)} />
               Links
@@ -511,11 +562,57 @@ export const NetworkMapPage: React.FC<{ onToast: ToastFn }> = ({ onToast }) => {
               <span className="inline-flex items-center gap-1"><i className="bpc-legend-line" style={{ background: LEVEL_VAR.bad }} />slow / down</span>
             </span>
           </div>
+          <div className="absolute right-3 top-3 z-[600] w-72 max-w-[calc(100%-4.5rem)] text-[11.5px]">
+            <form
+              onSubmit={searchPlace}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[var(--ac-surface)] border border-[var(--ac-line)] shadow"
+            >
+              <Search className="w-3.5 h-3.5 flex-none text-[var(--ac-muted)]" />
+              <input
+                type="search"
+                value={placeQuery}
+                onChange={(e) => {
+                  setPlaceQuery(e.target.value);
+                  setPlaceError('');
+                  if (!e.target.value) setPlaceResults(null);
+                }}
+                placeholder={placing.length ? 'Place at: city, address or lat,lng' : 'Go to: city, address or lat,lng'}
+                aria-label="Find a place or coordinates"
+                className="flex-1 min-w-0 bg-transparent py-0.5 outline-none"
+              />
+              {placeBusy && <span className="text-[var(--ac-muted)]">…</span>}
+            </form>
+            {(placeResults?.length || placeError) && (
+              <div className="mt-1 rounded-lg bg-[var(--ac-surface)] border border-[var(--ac-line)] shadow-lg overflow-hidden">
+                {placeError && <p className="m-0 px-2.5 py-2 text-[var(--ac-muted)]">{placeError}</p>}
+                {placeResults && placeResults.length > 0 && (
+                  <>
+                    <ul className="m-0 p-0 list-none divide-y divide-[var(--ac-line)]">
+                      {placeResults.map((r) => (
+                        <li key={`${r.lat},${r.lng},${r.name}`}>
+                          <button
+                            type="button"
+                            onClick={() => goTo(r)}
+                            className="w-full text-left px-2.5 py-1.5 hover:bg-[var(--ac-surface-2)] cursor-pointer"
+                          >
+                            {r.name}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="m-0 px-2.5 py-1 text-[10px] text-[var(--ac-muted)] border-t border-[var(--ac-line)]">
+                      Search © OpenStreetMap contributors
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
           {placing.length > 0 && (
             <div className="absolute left-1/2 -translate-x-1/2 bottom-4 z-[500] flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--ac-ink)] text-[var(--ac-surface)] text-xs shadow-xl">
               <Crosshair className="w-3.5 h-3.5" />
               <span>
-                Click the map to place{' '}
+                Click the map or search above to place{' '}
                 <strong>{placing.length === 1 ? placing[0].name : `${placing.length} selected`}</strong>
               </span>
               <button type="button" onClick={() => setPlacing([])} aria-label="Cancel placing" className="cursor-pointer">

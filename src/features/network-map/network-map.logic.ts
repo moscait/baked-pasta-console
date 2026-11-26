@@ -300,3 +300,22 @@ export function matchesLocationQuery(n: Pick<MapNode, 'name' | 'attributes'>, qu
   }
   return n.name.toLowerCase().includes(q);
 }
+
+/**
+ * Parses coordinates typed by a person: "39.04, -77.48", "39.04 -77.48", or with hemisphere
+ * letters and degree signs ("39.04°N 77.48°W"). Returns null when the text is not a coordinate
+ * pair, so it can be treated as a place name instead.
+ */
+export function parseCoordinates(text: string): GeoPoint | null {
+  const m = text
+    .trim()
+    .toUpperCase()
+    .match(/^(-?\d+(?:\.\d+)?)\s*°?\s*([NS])?\s*[,;\s]\s*(-?\d+(?:\.\d+)?)\s*°?\s*([EW])?$/);
+  if (!m) return null;
+  let lat = Number(m[1]);
+  let lng = Number(m[3]);
+  if (m[2] === 'S') lat = -Math.abs(lat);
+  if (m[4] === 'W') lng = -Math.abs(lng);
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+}
