@@ -1,0 +1,160 @@
+{
+  "config-types": [
+    { "id": "ct-intercept-v1", "name": "intercept.v1", "createdAt": "$now",
+      "schema": { "type": "object", "properties": { "protocols": { "type": "array" }, "addresses": { "type": "array" }, "portRanges": { "type": "array" } } } },
+    { "id": "ct-host-v1", "name": "host.v1", "createdAt": "$now",
+      "schema": { "type": "object", "properties": { "protocol": { "type": "string" }, "address": { "type": "string" }, "port": { "type": "integer" } } } }
+  ],
+  "configs": [
+    { "id": "cfg-crm-intercept", "name": "crm-https.intercept.v1", "configTypeId": "ct-intercept-v1", "configType": { "name": "intercept.v1" },
+      "data": { "protocols": ["tcp"], "addresses": ["crm.ziti"], "portRanges": [{ "low": 443, "high": 443 }] }, "createdAt": "$now" },
+    { "id": "cfg-crm-host", "name": "crm-https.host.v1", "configTypeId": "ct-host-v1", "configType": { "name": "host.v1" },
+      "data": { "protocol": "tcp", "address": "127.0.0.1", "port": 8443 }, "createdAt": "$now" },
+    { "id": "cfg-ssh-intercept", "name": "devbox-ssh.intercept.v1", "configTypeId": "ct-intercept-v1", "configType": { "name": "intercept.v1" },
+      "data": { "protocols": ["tcp"], "addresses": ["devbox.ziti"], "portRanges": [{ "low": 22, "high": 22 }] }, "createdAt": "$now" },
+    { "id": "cfg-ssh-host", "name": "devbox-ssh.host.v1", "configTypeId": "ct-host-v1", "configType": { "name": "host.v1" },
+      "data": { "protocol": "tcp", "address": "127.0.0.1", "port": 22 }, "createdAt": "$now" },
+    { "id": "cfg-pg-intercept", "name": "billing-db-postgres.intercept.v1", "configTypeId": "ct-intercept-v1", "configType": { "name": "intercept.v1" },
+      "data": { "protocols": ["tcp"], "addresses": ["billing-db.ziti"], "portRanges": [{ "low": 5432, "high": 5432 }] }, "createdAt": "$now" },
+    { "id": "cfg-pg-host", "name": "billing-db-postgres.host.v1", "configTypeId": "ct-host-v1", "configType": { "name": "host.v1" },
+      "data": { "protocol": "tcp", "address": "127.0.0.1", "port": 5432 }, "createdAt": "$now" }
+  ],
+  "identities": [
+    { "id": "id-admin", "name": "Default Admin", "typeId": "Default", "type": { "name": "Default" }, "isAdmin": true, "roleAttributes": [],
+      "authenticators": { "updb": { "id": "auth-1" } }, "enrollment": {}, "hasEdgeRouterConnection": true,
+      "sdkInfo": { "type": "ziti-Browser", "version": "1.0.0" }, "createdAt": "$now" },
+    { "id": "id-alice", "name": "alice-macbook", "typeId": "Default", "type": { "name": "Default" }, "isAdmin": false, "roleAttributes": ["sales", "employees"],
+      "authenticators": { "cert": { "id": "auth-2" } }, "enrollment": {}, "hasEdgeRouterConnection": true,
+      "sdkInfo": { "appId": "Ziti Desktop Edge", "version": "2.4.1" }, "createdAt": "$now" },
+    { "id": "id-bob", "tags": { "geolocation": "51.50740,-0.12780" }, "name": "bob-thinkpad", "typeId": "Default", "type": { "name": "Default" }, "isAdmin": false,
+      "roleAttributes": ["developers", "employees", "ssh-users"], "authenticators": { "cert": { "id": "auth-3" } }, "enrollment": {}, "hasEdgeRouterConnection": true,
+      "sdkInfo": { "appId": "ziti-edge-tunnel", "version": "1.3.2" }, "createdAt": "$now" },
+    { "id": "id-carla", "tags": { "geolocation": "52.52000,13.40500" }, "name": "carla-linux", "typeId": "Default", "type": { "name": "Default" }, "isAdmin": false,
+      "roleAttributes": ["sre", "dbas", "ssh-users"], "authenticators": { "cert": { "id": "auth-4" } }, "enrollment": {}, "hasEdgeRouterConnection": true,
+      "sdkInfo": { "appId": "ziti-edge-tunnel", "version": "1.3.2" }, "createdAt": "$now" },
+    { "id": "id-dave", "name": "dave-tablet", "typeId": "Default", "type": { "name": "Default" }, "isAdmin": false, "roleAttributes": ["sales"],
+      "authenticators": {}, "enrollment": { "ott": { "id": "enr-dave",
+        "jwt": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJpZC1kYXZlIiwiaXNzIjoiaHR0cHM6Ly96aXRpLmJha2VkcGFzdGEubG9jYWw6MTI4MCIsImV4cCI6MTk5OTk5OTk5OX0.demo-signature-dave",
+        "expiresAt": "$in:86400" } },
+      "hasEdgeRouterConnection": false, "createdAt": "$now" },
+    { "id": "id-crm-host", "tags": { "geolocation": "39.04380,-77.48740" }, "name": "crm-prod-01", "typeId": "Default", "type": { "name": "Default" }, "isAdmin": false,
+      "roleAttributes": ["crm-https-hosts"], "authenticators": { "cert": { "id": "auth-5" } }, "enrollment": {}, "hasEdgeRouterConnection": true,
+      "sdkInfo": { "appId": "ziti-edge-tunnel", "version": "1.3.2" }, "createdAt": "$now" },
+    { "id": "id-devbox-host", "tags": { "geolocation": "41.87810,-87.62980" }, "name": "devbox", "typeId": "Default", "type": { "name": "Default" }, "isAdmin": false,
+      "roleAttributes": ["devbox-ssh-hosts"], "authenticators": { "cert": { "id": "auth-6" } }, "enrollment": {}, "hasEdgeRouterConnection": true,
+      "sdkInfo": { "appId": "ziti-edge-tunnel", "version": "1.3.2" }, "createdAt": "$now" },
+    { "id": "id-billing-host", "tags": { "geolocation": "50.11090,8.68210" }, "name": "billing-db", "typeId": "Default", "type": { "name": "Default" }, "isAdmin": false,
+      "roleAttributes": ["billing-db-postgres-hosts"], "authenticators": { "cert": { "id": "auth-7" } }, "enrollment": {}, "hasEdgeRouterConnection": true,
+      "sdkInfo": { "appId": "ziti-edge-tunnel", "version": "1.3.2" }, "createdAt": "$now" },
+    { "id": "id-unassigned", "name": "contractor-laptop", "typeId": "Default", "type": { "name": "Default" }, "isAdmin": false, "roleAttributes": [],
+      "authenticators": {}, "enrollment": { "ott": { "id": "enr-contractor",
+        "jwt": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJpZC11bmFzc2lnbmVkIiwiaXNzIjoiaHR0cHM6Ly96aXRpLmJha2VkcGFzdGEubG9jYWw6MTI4MCIsImV4cCI6MTk5OTk5OTk5OX0.demo-signature-contractor",
+        "expiresAt": "$in:86400" } },
+      "hasEdgeRouterConnection": false, "createdAt": "$now" }
+  ],
+  "authenticators": [
+    { "id": "auth-1", "method": "updb", "identityId": "id-admin", "identity": { "id": "id-admin", "name": "Default Admin" }, "createdAt": "$now" },
+    { "id": "auth-2", "method": "cert", "identityId": "id-alice", "identity": { "id": "id-alice", "name": "alice-macbook" }, "fingerprint": "a1:b2:c3:02", "createdAt": "$now" },
+    { "id": "auth-3", "method": "cert", "identityId": "id-bob", "identity": { "id": "id-bob", "name": "bob-thinkpad" }, "fingerprint": "d4:e5:f6:03", "createdAt": "$now" },
+    { "id": "auth-4", "method": "cert", "identityId": "id-carla", "identity": { "id": "id-carla", "name": "carla-linux" }, "fingerprint": "98:76:54:04", "createdAt": "$now" },
+    { "id": "auth-5", "method": "cert", "identityId": "id-crm-host", "identity": { "id": "id-crm-host", "name": "crm-prod-01" }, "fingerprint": "11:22:33:05", "createdAt": "$now" },
+    { "id": "auth-6", "method": "cert", "identityId": "id-devbox-host", "identity": { "id": "id-devbox-host", "name": "devbox" }, "fingerprint": "44:55:66:06", "createdAt": "$now" },
+    { "id": "auth-7", "method": "cert", "identityId": "id-billing-host", "identity": { "id": "id-billing-host", "name": "billing-db" }, "fingerprint": "77:88:99:07", "createdAt": "$now" }
+  ],
+  "services": [
+    { "id": "svc-crm", "name": "crm-https", "roleAttributes": ["crm-https", "https", "web"], "configs": ["cfg-crm-intercept", "cfg-crm-host"],
+      "encryptionRequired": true, "terminatorStrategy": "smartrouting", "createdAt": "$now" },
+    { "id": "svc-ssh", "name": "devbox-ssh", "roleAttributes": ["devbox-ssh", "ssh"], "configs": ["cfg-ssh-intercept", "cfg-ssh-host"],
+      "encryptionRequired": true, "terminatorStrategy": "smartrouting", "createdAt": "$now" },
+    { "id": "svc-pg", "name": "billing-db-postgres", "roleAttributes": ["billing-db-postgres", "postgres"], "configs": ["cfg-pg-intercept", "cfg-pg-host"],
+      "encryptionRequired": true, "terminatorStrategy": "smartrouting", "createdAt": "$now" },
+    { "id": "svc-staging", "name": "staging-api", "roleAttributes": ["staging"], "configs": [],
+      "encryptionRequired": true, "terminatorStrategy": "smartrouting", "createdAt": "$now" }
+  ],
+  "edge-routers": [
+    { "id": "er-us-east", "tags": { "geolocation": "38.94450,-77.45580" }, "name": "us-east-edge-01", "roleAttributes": ["public", "us-east"],
+      "isOnline": true, "isVerified": true, "cost": 10, "noTraversal": false, "versionInfo": { "version": "v1.3.2" }, "createdAt": "$now" },
+    { "id": "er-eu-west", "tags": { "geolocation": "53.34980,-6.26030" }, "name": "eu-west-edge-01", "roleAttributes": ["public", "eu-west"],
+      "isOnline": true, "isVerified": true, "cost": 20, "noTraversal": false, "versionInfo": { "version": "v1.3.2" }, "createdAt": "$now" },
+    { "id": "er-lab", "name": "dc-private-router", "roleAttributes": ["datacenter"],
+      "isOnline": false, "isVerified": true, "cost": 5, "noTraversal": false, "versionInfo": { "version": "v1.3.1" }, "createdAt": "$now" }
+  ],
+  "transit-routers": [
+    { "id": "tr-core-01", "tags": { "geolocation": "52.36760,4.90410" }, "name": "core-fabric-transit-01", "isOnline": true, "isVerified": true, "cost": 0, "createdAt": "$now" }
+  ],
+  "service-policies": [
+    { "id": "sp-crm-dial", "name": "crm-https-dial", "type": "Dial", "semantic": "AnyOf", "identityRoles": ["#employees", "#sales"],
+      "serviceRoles": ["#crm-https", "#web"], "postureCheckRoles": [], "createdAt": "$now" },
+    { "id": "sp-crm-bind", "name": "crm-https-bind", "type": "Bind", "semantic": "AnyOf", "identityRoles": ["#crm-https-hosts"],
+      "serviceRoles": ["#crm-https"], "postureCheckRoles": [], "createdAt": "$now" },
+    { "id": "sp-ssh-dial", "name": "devbox-ssh-dial", "type": "Dial", "semantic": "AnyOf", "identityRoles": ["#ssh-users", "#sre"],
+      "serviceRoles": ["#devbox-ssh"], "postureCheckRoles": ["#mfa-required"],
+      "postureCheckRolesDisplay": [{ "name": "MFA Required", "role": "#mfa-required" }], "createdAt": "$now" },
+    { "id": "sp-ssh-bind", "name": "devbox-ssh-bind", "type": "Bind", "semantic": "AnyOf", "identityRoles": ["#devbox-ssh-hosts"],
+      "serviceRoles": ["#devbox-ssh"], "postureCheckRoles": [], "createdAt": "$now" },
+    { "id": "sp-pg-dial", "name": "billing-db-postgres-dial", "type": "Dial", "semantic": "AnyOf", "identityRoles": ["#dbas", "#developers"],
+      "serviceRoles": ["#billing-db-postgres"], "postureCheckRoles": [], "createdAt": "$now" },
+    { "id": "sp-pg-bind", "name": "billing-db-postgres-bind", "type": "Bind", "semantic": "AnyOf", "identityRoles": ["#billing-db-postgres-hosts"],
+      "serviceRoles": ["#billing-db-postgres"], "postureCheckRoles": [], "createdAt": "$now" }
+  ],
+  "edge-router-policies": [
+    { "id": "erp-all-public", "name": "all-identities-public-routers", "semantic": "AnyOf", "identityRoles": ["#all"], "edgeRouterRoles": ["#public"], "createdAt": "$now" }
+  ],
+  "service-edge-router-policies": [
+    { "id": "serp-all-services", "name": "all-services-public-routers", "semantic": "AnyOf", "serviceRoles": ["#all"], "edgeRouterRoles": ["#public"], "createdAt": "$now" }
+  ],
+  "posture-checks": [
+    { "id": "pc-mfa", "name": "MFA Required", "typeId": "MFA", "roleAttributes": ["mfa-required"], "timeoutSeconds": 3600,
+      "promptOnWake": true, "promptOnUnlock": false, "createdAt": "$now" },
+    { "id": "pc-mac-os", "name": "macOS 14+ Minimum", "typeId": "OS", "roleAttributes": ["os-check"],
+      "operatingSystems": [{ "type": "macOS", "versions": [">=14.0.0"] }], "createdAt": "$now" }
+  ],
+  "cas": [
+    { "id": "ca-corp", "name": "Corporate Hardware PKI CA", "isVerified": true, "isAutoCaEnrollmentEnabled": true, "isOttCaEnrollmentEnabled": false,
+      "isAuthEnabled": true, "identityRoles": ["#employees"], "createdAt": "$now" }
+  ],
+  "auth-policies": [
+    { "id": "ap-default", "name": "Default Auth Policy",
+      "primary": { "cert": { "allowed": true, "allowExpiredCerts": false }, "updb": { "allowed": true, "minPasswordLength": 8, "requireMixedCase": true },
+        "extJwt": { "allowed": true, "allowedSigners": [] } },
+      "secondary": { "requireTotp": false }, "createdAt": "$now" }
+  ],
+  "external-jwt-signers": [
+    { "id": "ejs-okta", "name": "Okta Workforce OIDC", "issuer": "https://login.bakedpasta.example.com/oauth2/default", "audience": "openziti-edge",
+      "jwksEndpoint": "https://login.bakedpasta.example.com/oauth2/default/v1/keys", "enabled": true, "claimsProperty": "email", "useExternalId": true, "createdAt": "$now" }
+  ],
+  "terminators": [
+    { "id": "term-crm-1", "serviceId": "svc-crm", "service": { "name": "crm-https" }, "routerId": "er-us-east", "router": { "name": "us-east-edge-01" },
+      "binding": "edge", "address": "hosted:id-crm-host", "cost": 0, "precedence": "default", "createdAt": "$now" },
+    { "id": "term-ssh-1", "serviceId": "svc-ssh", "service": { "name": "devbox-ssh" }, "routerId": "er-us-east", "router": { "name": "us-east-edge-01" },
+      "binding": "edge", "address": "hosted:id-devbox-host", "cost": 0, "precedence": "default", "createdAt": "$now" },
+    { "id": "term-pg-1", "serviceId": "svc-pg", "service": { "name": "billing-db-postgres" }, "routerId": "er-eu-west", "router": { "name": "eu-west-edge-01" },
+      "binding": "edge", "address": "hosted:id-billing-host", "cost": 0, "precedence": "default", "createdAt": "$now" }
+  ],
+  "sessions": [
+    { "id": "sess-01", "apiSessionId": "apisess-02", "apiSession": { "id": "apisess-02", "name": "" }, "serviceId": "svc-crm", "service": { "id": "svc-crm", "name": "crm-https" },
+      "identityId": "id-alice", "type": "Dial", "edgeRouters": [{ "id": "er-us-east", "name": "us-east-edge-01" }], "createdAt": "$ago:45" },
+    { "id": "sess-02", "apiSessionId": "apisess-03", "apiSession": { "id": "apisess-03", "name": "" }, "serviceId": "svc-ssh", "service": { "id": "svc-ssh", "name": "devbox-ssh" },
+      "identityId": "id-bob", "type": "Dial", "edgeRouters": [{ "id": "er-us-east", "name": "us-east-edge-01" }], "createdAt": "$ago:30" },
+    { "id": "sess-03", "apiSessionId": "apisess-04", "apiSession": { "id": "apisess-04", "name": "" }, "serviceId": "svc-pg", "service": { "id": "svc-pg", "name": "billing-db-postgres" },
+      "identityId": "id-bob", "type": "Dial", "edgeRouters": [{ "id": "er-eu-west", "name": "eu-west-edge-01" }], "createdAt": "$ago:12" },
+    { "id": "sess-04", "apiSessionId": "apisess-05", "apiSession": { "id": "apisess-05", "name": "" }, "serviceId": "svc-ssh", "service": { "id": "svc-ssh", "name": "devbox-ssh" },
+      "identityId": "id-carla", "type": "Dial", "edgeRouters": [{ "id": "er-us-east", "name": "us-east-edge-01" }], "createdAt": "$ago:20" },
+    { "id": "sess-05", "apiSessionId": "apisess-06", "apiSession": { "id": "apisess-06", "name": "" }, "serviceId": "svc-crm", "service": { "id": "svc-crm", "name": "crm-https" },
+      "identityId": "id-crm-host", "type": "Bind", "edgeRouters": [{ "id": "er-us-east", "name": "us-east-edge-01" }], "createdAt": "$ago:120" }
+  ],
+  "api-sessions": [
+    { "id": "apisess-01", "token": "demo-session-token", "identityId": "id-admin", "identity": { "id": "id-admin", "name": "Default Admin" }, "authenticatorId": "auth-1",
+      "ipAddress": "127.0.0.1", "authQueries": [], "lastActivityAt": "$ago:4", "createdAt": "$ago:1800" },
+    { "id": "apisess-02", "token": "demo-tok-alice", "identityId": "id-alice", "identity": { "id": "id-alice", "name": "alice-macbook" }, "authenticatorId": "auth-2",
+      "ipAddress": "198.51.100.42", "authQueries": [], "lastActivityAt": "$ago:14", "createdAt": "$ago:900" },
+    { "id": "apisess-03", "token": "demo-tok-bob-1", "identityId": "id-bob", "identity": { "id": "id-bob", "name": "bob-thinkpad" }, "authenticatorId": "auth-3",
+      "ipAddress": "198.51.100.42", "authQueries": [], "lastActivityAt": "$ago:22", "createdAt": "$ago:1200" },
+    { "id": "apisess-04", "token": "demo-tok-bob-2", "identityId": "id-bob", "identity": { "id": "id-bob", "name": "bob-thinkpad" }, "authenticatorId": "auth-3",
+      "ipAddress": "203.0.113.194", "authQueries": [], "lastActivityAt": "$ago:6", "createdAt": "$ago:45" },
+    { "id": "apisess-05", "token": "demo-tok-carla", "identityId": "id-carla", "identity": { "id": "id-carla", "name": "carla-linux" }, "authenticatorId": "auth-4",
+      "ipAddress": "10.24.8.15", "authQueries": [], "lastActivityAt": "$ago:18", "createdAt": "$ago:600" },
+    { "id": "apisess-06", "token": "demo-tok-crm-host", "identityId": "id-crm-host", "identity": { "id": "id-crm-host", "name": "crm-prod-01" }, "authenticatorId": "auth-5",
+      "ipAddress": "10.10.0.21", "authQueries": [], "lastActivityAt": "$ago:9", "createdAt": "$ago:3600" }
+  ]
+}

@@ -10,6 +10,8 @@ Everything ziti needs, layered, baked, and visualized: a modern, sleek, plug-com
 > [!NOTE]
 > This is an independent community project, not affiliated with NetFoundry or the [OpenZiti](https://openziti.io) project.
 
+**Two Editions (`web/` & `vaadin/`)**: This repository hosts both the static React/Vite ZAC drop-in ([`web/`](web/)) and a server-side Java/Vaadin edition ([`vaadin/`](vaadin/)). See **[EDITIONS.md](EDITIONS.md)** for a side-by-side comparison of architecture, deployment, and security trade-offs.
+
 ---
 
 ## ✨ Why Baked Pasta Console?
@@ -72,9 +74,10 @@ Click **＋ Set up a service** from the Access Canvas or Services page to provis
   <img src="assets/diagrams/controller-architecture.svg" alt="Plug-compatible architecture: baked-pasta-console builds a static SPA bundle (dist/ and ziti-console.zip) served by the OpenZiti Controller zac binding, communicating over /edge/management/v1 and /oidc PKCE." width="100%">
 </picture>
 
-### 1. Local Development & Interactive Demo Sandbox
+### 1. Local Development & Interactive Demo Sandbox (`web/`)
 
 ```bash
+cd web
 npm install
 npm run dev
 ```
@@ -87,11 +90,11 @@ On a first visit where no OpenZiti controller answers at the page's own origin (
 
 ```bash
 # Build with relative paths (works at both / and /zac/):
-npm run build
+cd web && npm run build
 
-# Or build with explicit /zac/ base href and package ziti-console.zip:
-npm run package:zac
-# (Equivalent to: ./build.sh /zac/)
+# Or build with explicit /zac/ base href and package web/ziti-console.zip:
+cd web && npm run package:zac
+# (Equivalent from repo root: ./build.sh /zac/)
 ```
 
 Mount the unpacked bundle in your OpenZiti Controller configuration (`controller.yml`):
@@ -122,24 +125,26 @@ web:
 ├── scripts/
 │   ├── logo/                     # Fraunces outline & casserole mark generator (build_logo.py, outline.py)
 │   └── diagrams/                 # Light & dark SVG diagram generator (build_diagrams.py)
-├── src/
-│   ├── components/               # BakedPastaMark, native <dialog> ModalDialog, responsive sortable DataTable
-│   ├── features/access-canvas/   # Pure logic, Vitest specs, Free-Form CanvasBoard, ReactFlowBoard, AccessWizard
-│   ├── pages/                    # Dashboard, Identities (QR/JWT), Services/Configs, Routers, Policies, Auth, Sessions
-│   └── services/                 # OpenZiti Edge Management REST + OIDC PKCE client & Demo Sandbox store
-├── build.sh                      # Upstream-compatible build script (./build.sh <base-href>)
-├── package.json                  # Scripts: dev, build, build:zac, package:zac, test, lint, typecheck, check
-└── vite.config.ts                # Vite 6 + React 19 + Tailwind CSS v4 + Vitest configuration
+├── web/                          # React 19 + TypeScript + Vite static ZAC drop-in (released via web-v* tags)
+│   ├── src/
+│   │   ├── components/           # BakedPastaMark, native <dialog> ModalDialog, responsive sortable DataTable
+│   │   ├── features/             # Access Canvas, Guided Wizard, Config Builder, Network Map, Services, etc.
+│   │   ├── pages/                # Dashboard, Identities (QR/JWT), Services/Configs, Routers, Policies, Auth, Sessions
+│   │   └── services/             # OpenZiti Edge Management REST + OIDC PKCE client & Demo Sandbox store
+│   ├── package.json              # Scripts: dev, build, build:zac, package:zac, test, lint, typecheck, check
+│   └── vite.config.ts            # Vite + React 19 + Tailwind CSS v4 + Vitest configuration
+├── vaadin/                       # Java + Vaadin edition (released via vaadin-v* tags)
+└── build.sh                      # Upstream-compatible root wrapper (./build.sh <base-href> -> web/dist/)
 ```
 
 ---
 
 ## 🧪 Testing & Regenerating Graphics
 
-Run the unit tests covering session handling, role matching, effective access calculation, policy recommendation scoring, blast-radius impact preview, free-form board layout & filtering, clipboard cut/copy/paste semantics, 4-step wizard validation & planning, and browser layout persistence:
+Run the web console unit tests covering session handling, role matching, effective access calculation, policy recommendation scoring, blast-radius impact preview, free-form board layout & filtering, clipboard cut/copy/paste semantics, 4-step wizard validation & planning, and browser layout persistence:
 
 ```bash
-npm test
+cd web && npm test
 ```
 
 All logos and diagrams in [`assets/logo/`](assets/logo/) and [`assets/diagrams/`](assets/diagrams/) are generated as self-contained SVGs (with light and `-on-dark` variants rendered via `<picture>` and `prefers-color-scheme`) alongside high-DPI (2400px retina) `.png` renders:
