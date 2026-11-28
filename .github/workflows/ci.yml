@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Reused by release-vaadin.yml, so a release runs exactly the checks a PR does.
+  workflow_call:
 
 permissions:
   contents: read
@@ -11,7 +13,7 @@ permissions:
 jobs:
   web:
     name: Web (React / Vite)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: web
@@ -28,3 +30,21 @@ jobs:
       - run: npm test
       - run: npm audit --audit-level=high
       - run: npx vite build
+
+  vaadin:
+    name: Vaadin (Java / Spring Boot)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: vaadin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: maven
+      - run: ./mvnw test -B
+      # Build the container too, so a Dockerfile that only works on a developer's machine (e.g. copying
+      # a gitignored file) fails here instead of in the release workflow.
+      - run: docker build -t baked-pasta-console-vaadin:ci .

@@ -1,0 +1,178 @@
+name: Release Vaadin Container
+
+# Publishes multi-platform (linux/amd64 + linux/arm64) container images to GHCR:
+#   push to main (vaadin/**) -> :main and :sha-<commit>
+#   tag vaadin-vX.Y.Z        -> :X.Y.Z, :X.Y, :latest, and :sha-<commit> + GitHub Release
+on:
+  push:
+    branches: [main]
+    tags: ['vaadin-v*']
+    paths:
+      - 'vaadin/**'
+      - '.github/workflows/release-vaadin.yml'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: baked-pasta-console-vaadin
+
+jobs:
+  verify-tag:
+    name: Verify Vaadin tag
+    if: startsWith(github.ref, 'refs/tags/vaadin-v')
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: vaadin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check tag matches vaadin/pom.xml version
+        run: |
+          ver="$(sed -n 's|^    <version>\([^<]*\)</version>|\1|p' pom.xml | head -n 1)"
+          expected="vaadin-v${ver}"
+          if [ "$expected" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match vaadin/pom.xml version $expected"
+            exit 1
+          fi
+
+  test:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build (${{ matrix.platform.name }})
+    needs: [verify-tag, test]
+    if: always() && (needs.verify-tag.result == 'success' || needs.verify-tag.result == 'skipped') && needs.test.result == 'success'
+    runs-on: ${{ matrix.platform.runner }}
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      linux-amd64: ${{ steps.digest.outputs.linux-amd64 }}
+      linux-arm64: ${{ steps.digest.outputs.linux-arm64 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux/amd64
+            runner: ubuntu-24.04
+          - name: linux/arm64
+            runner: ubuntu-24.04-arm
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+    steps:
+      - name: Prepare
+        run: |
+          platform='${{ matrix.platform.name }}'
+          echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Extract metadata (labels)
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./vaadin
+          platforms: ${{ matrix.platform.name }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=vaadin-${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,mode=max,scope=vaadin-${{ env.PLATFORM_PAIR }}
+
+      - name: Export digest
+        id: digest
+        run: echo "${PLATFORM_PAIR}=${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish multi-arch manifest
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+    steps:
+      - name: Collect digests
+        env:
+          AMD64: ${{ needs.build.outputs.linux-amd64 }}
+          ARM64: ${{ needs.build.outputs.linux-arm64 }}
+        run: |
+          for d in "$AMD64" "$ARM64"; do
+            [[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::missing or malformed digest: '$d'"; exit 1; }
+          done
+          echo "SOURCES=$IMAGE@$AMD64 $IMAGE@$ARM64" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Extract metadata (tags)
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=match,pattern=vaadin-v(.*),group=1
+            type=match,pattern=vaadin-v(\d+\.\d+)\..*,group=1
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/vaadin-v') }}
+            type=sha,format=long
+
+      - name: Create multi-platform manifest and push tags
+        run: |
+          # shellcheck disable=SC2046,SC2086
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $SOURCES
+
+      - name: Inspect published image
+        id: inspect
+        run: |
+          MANIFEST="$(docker buildx imagetools inspect "$IMAGE:${{ steps.meta.outputs.version }}")"
+          echo "$MANIFEST"
+          DIGEST="$(printf '%s\n' "$MANIFEST" | awk '/^Digest:/{print $2; exit}')"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/vaadin-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          VER="${TAG#vaadin-v}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "Multi-arch container image (\`linux/amd64\`, \`linux/arm64\`):
+
+          \`\`\`
+          $IMAGE:$VER@${{ steps.inspect.outputs.digest }}
+          \`\`\`" \
+            --generate-notes \
+            --verify-tag
