@@ -1170,19 +1170,39 @@ class ZitiServiceImpl {
       this.list('configs'),
     ]);
     const own = (p: { isSystem?: boolean }) => !p.isSystem;
+    const ownServicePolicies = sps.filter(own);
+    const ownErPolicies = erps.filter(own);
+    const referencedIdentityRefs = new Set<string>();
+    for (const p of [...ownServicePolicies, ...ownErPolicies]) {
+      for (const r of p.identityRoles || []) {
+        if (r.startsWith('@')) referencedIdentityRefs.add(r.slice(1));
+      }
+    }
+    const routerOnlineById = new Map(ers.map((r) => [r.id, !!r.isOnline]));
     const identities: AcIdentity[] = ids
-      .filter((i) => (i.typeId || i.type?.name || i.type?.id) !== 'Router')
-      .map((i) => ({
-        id: i.id,
-        name: i.name,
-        attrs: i.roleAttributes || [],
-        enrolled: !isEmptyObj(i.authenticators) || isEmptyObj(i.enrollment),
-        online: !!i.hasEdgeRouterConnection,
-        isAdmin:
-          !!i.isDefaultAdmin ||
-          (!!i.isAdmin && !i.roleAttributes?.length && !i.authenticators?.cert && !i.enrollment?.ott),
-        externalId: i.externalId,
-      }));
+      .filter((i) => {
+        const isRouter = (i.typeId || i.type?.name || i.type?.id) === 'Router';
+        if (!isRouter) return true;
+        return (
+          (i.roleAttributes?.length ?? 0) > 0 ||
+          referencedIdentityRefs.has(i.id) ||
+          referencedIdentityRefs.has(i.name)
+        );
+      })
+      .map((i) => {
+        const isRouter = (i.typeId || i.type?.name || i.type?.id) === 'Router';
+        return {
+          id: i.id,
+          name: i.name,
+          attrs: i.roleAttributes || [],
+          enrolled: !isEmptyObj(i.authenticators) || isEmptyObj(i.enrollment),
+          online: !!i.hasEdgeRouterConnection || (isRouter && routerOnlineById.get(i.id) === true),
+          isAdmin:
+            !!i.isDefaultAdmin ||
+            (!!i.isAdmin && !i.roleAttributes?.length && !i.authenticators?.cert && !i.enrollment?.ott),
+          externalId: i.externalId,
+        };
+      });
     const services: AcService[] = svcs.map((s) => ({
       id: s.id,
       name: s.name,
@@ -1197,7 +1217,7 @@ class ZitiServiceImpl {
       attrs: r.roleAttributes || [],
       online: !!r.isOnline,
     }));
-    const servicePolicies: AcServicePolicy[] = sps.filter(own).map((p) => ({
+    const servicePolicies: AcServicePolicy[] = ownServicePolicies.map((p) => ({
       id: p.id,
       name: p.name,
       type: p.type,
@@ -1208,7 +1228,7 @@ class ZitiServiceImpl {
         ? p.postureCheckRolesDisplay.map((x) => x.name || x.role)
         : p.postureCheckRoles || [],
     }));
-    const erPolicies: AcErPolicy[] = erps.filter(own).map((p) => ({
+    const erPolicies: AcErPolicy[] = ownErPolicies.map((p) => ({
       id: p.id,
       name: p.name,
       semantic: p.semantic || 'AnyOf',

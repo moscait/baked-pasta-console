@@ -311,4 +311,43 @@ describe('zitiService session handling', () => {
     expect(policySubscriber).toHaveBeenCalledTimes(1);
     expect(svc.getConcurrencyPolicy().activeWithinSeconds).toBe(180);
   });
+
+  it('includes Router-type identities in the canvas model when referenced by a policy or carrying role attributes', async () => {
+    const svc = await freshService(signedIn);
+    fetchMock.mockImplementation(async (url: string) => {
+      const u = String(url);
+      if (u.includes('/identities?')) {
+        return jsonResponse(200, {
+          data: [
+            { id: 'r-host', name: 'router-instance-1', typeId: 'Router', roleAttributes: [], hasEdgeRouterConnection: false },
+            { id: 'r-unused', name: 'router-unused', typeId: 'Router', roleAttributes: [], hasEdgeRouterConnection: false },
+            { id: 'r-tagged', name: 'router-tagged', typeId: 'Router', roleAttributes: ['hosts'], hasEdgeRouterConnection: false },
+            { id: 'u-1', name: 'dev-laptop', typeId: 'Default', roleAttributes: ['admins'], hasEdgeRouterConnection: true },
+          ],
+        });
+      }
+      if (u.includes('/edge-routers?')) {
+        return jsonResponse(200, {
+          data: [
+            { id: 'r-host', name: 'router-instance-1', roleAttributes: [], isOnline: true },
+            { id: 'r-unused', name: 'router-unused', roleAttributes: [], isOnline: true },
+            { id: 'r-tagged', name: 'router-tagged', roleAttributes: [], isOnline: false },
+          ],
+        });
+      }
+      if (u.includes('/service-policies?')) {
+        return jsonResponse(200, {
+          data: [
+            { id: 'sp-1', name: 'ziti-mgmt-bind', type: 'Bind', semantic: 'AnyOf', identityRoles: ['@r-host'], serviceRoles: ['#ziti-mgmt'] },
+          ],
+        });
+      }
+      return jsonResponse(200, { data: [] });
+    });
+
+    const model = await svc.loadCanvasModel();
+    expect(model.identities.map((i) => i.id)).toEqual(['r-host', 'r-tagged', 'u-1']);
+    expect(model.identities.find((i) => i.id === 'r-host')?.online).toBe(true);
+    expect(model.identities.find((i) => i.id === 'r-tagged')?.online).toBe(false);
+  });
 });
