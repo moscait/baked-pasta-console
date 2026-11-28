@@ -155,7 +155,9 @@ jobs:
         run: |
           TAG="$GITHUB_REF_NAME"
           VER="${TAG#vaadin-v}"
+          # This job has no checkout, so name the repository explicitly.
           gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" \
             --notes "Multi-arch container image (\`linux/amd64\`, \`linux/arm64\`):
 
