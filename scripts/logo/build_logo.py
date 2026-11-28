@@ -16,7 +16,7 @@ HERE = Path(__file__).resolve().parent
 FONT = Path(os.environ.get("FRAUNCES_TTF", "/tmp/Fraunces.ttf"))
 ROOT = HERE.parent.parent
 OUT = ROOT / "assets" / "logo"
-PUBLIC = ROOT / "public"
+PUBLIC = ROOT / "web" / "public"
 OUT.mkdir(parents=True, exist_ok=True)
 PUBLIC.mkdir(parents=True, exist_ok=True)
 

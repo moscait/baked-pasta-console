@@ -4,11 +4,12 @@ Thanks for helping improve Baked Pasta Console. Bug reports, fixes and feature i
 
 Security problems are the exception: please report them privately as described in [SECURITY.md](SECURITY.md), not in an issue.
 
-## Getting started
+## Getting started (`web/`)
 
 You need Node.js 22 (the version CI uses) and npm.
 
 ```bash
+cd web
 npm ci
 npm run dev
 ```
@@ -17,9 +18,10 @@ With no OpenZiti controller at the dev server's address, the console opens the I
 
 ## Before you open a pull request
 
-Run the same checks CI runs:
+Run the same checks CI runs from `web/`:
 
 ```bash
+cd web
 npm run check      # lint, typecheck and unit tests
 npm run build      # production build, including the Content Security Policy
 ```
@@ -32,8 +34,8 @@ Please also:
 
 ## Code conventions
 
-- TypeScript throughout; `any` is not allowed outside test files. API shapes live in `src/services/api-types.ts`.
-- All controller calls go through `zitiService` in `src/services/ziti-service.ts`, which handles authentication, token refresh and the demo sandbox. Don't call `fetch` from components.
+- TypeScript throughout; `any` is not allowed outside test files. API shapes live in `web/src/services/api-types.ts`.
+- All controller calls go through `zitiService` in `web/src/services/ziti-service.ts`, which handles authentication, token refresh and the demo sandbox. Don't call `fetch` from components.
 - Changes made from the Access Canvas or the wizard are staged as operations and applied together, with automatic rollback if a step fails. Keep that model when adding new kinds of change.
 
 ## Regenerating the diagrams and logo

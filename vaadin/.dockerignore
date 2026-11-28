@@ -1,0 +1,19 @@
+# The Docker build runs the Maven build from scratch, so it doesn't need
+# local build output, dependencies, agent/tool caches, or IDE files.
+target/
+node_modules/
+src/main/bundles/
+.git
+.idea/
+.vscode/
+.vaadin/
+.claude/
+.agents/
+.playwright-mcp/
+.mcp.json
+.settings
+.project
+.classpath
+*.iml
+*.md
+.DS_Store

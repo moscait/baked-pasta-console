@@ -1,7 +1,7 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    directory: /
+    directory: /web
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -19,6 +19,17 @@ updates:
       # it and the whole majors group fails. Remove once typescript-eslint supports it.
       - dependency-name: typescript
         update-types: [version-update:semver-major]
+
+  # The Vaadin edition. Dependabot alerts cover its pom.xml too (security updates are enabled for
+  # the repo), so known-vulnerable Java dependencies get PRs without a separate CI scanner.
+  - package-ecosystem: maven
+    directory: /vaadin
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
 
   - package-ecosystem: github-actions
     directory: /

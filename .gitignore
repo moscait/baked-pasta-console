@@ -1,7 +1,33 @@
+# Node / Web
 node_modules/
 dist/
 *.zip
+
+# Java / Maven / Gradle / Vaadin
+target/
+build/
+.gradle/
+**/frontend/generated/
+**/src/main/frontend/generated/
+vite.generated.ts
+**/.vaadin/daemon.properties
+**/.vaadin/daemon.properties.tmp
+**/.vaadin/daemon.lock
+*.jar
+!**/.mvn/wrapper/maven-wrapper.jar
+*.war
+
+# IDEs
+*.iml
+.idea/
+.vscode/
+.settings
+.project
+.classpath
+
+# OS, tooling & local env
 .DS_Store
 *.log
 .env
 .env.*
+.playwright-mcp/
