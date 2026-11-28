@@ -83,24 +83,42 @@ java -jar target/*.jar
 To build a Docker image, run:
 
 ```bash
-docker build -t my-application:latest .
+docker build -t baked-pasta-console-vaadin .
 ```
 
-If you use commercial components, pass the license key as a build secret:
+To run the image against your controllers (`ZITI_CONTROLLERS` is required; the container will not start without it):
 
 ```bash
-docker build --secret id=proKey,src=$HOME/.vaadin/proKey -t my-application:latest .
-```
-
-To run the image, run:
-
-```bash
-docker run -p 8080:8080 -m 2g my-application:latest
+docker run -p 8080:8080 -m 2g \
+  -e ZITI_CONTROLLERS=https://ctrl.example.com:1280,https://staging-ctrl.example.com:1280 \
+  baked-pasta-console-vaadin
 ```
 
 The application is then available at http://localhost:8080. The `-m` option sets the memory limit of the container. The
 application uses up to 75% of it for the Java heap, which holds the UI state of all users, so adjust the limit to fit
 your application.
+
+The console has no login of its own: anyone who can reach it can use the sign-in page. So it only ever talks to the
+controllers listed in `ZITI_CONTROLLERS`: users pick one from a list on the sign-in page, and the server refuses any
+other address, which stops it being used to reach other hosts on its network. Certificate settings are server-side
+too.
+
+| Variable | In the container | What it does |
+| --- | --- | --- |
+| `ZITI_CONTROLLERS` | **required** | Comma-separated controller URLs (`https://host:port`, no path). The first is the default. |
+| `ZITI_CONTROLLER_CA_FILE` | (none) | PEM file with the controllers' CAs (mount it into the container; concatenate several). Use this instead of `ZITI_TRUST_ALL` for controllers with their own PKI; hostname checks still apply. |
+| `ZITI_TRUST_ALL` | `false` | Accept any controller certificate, like `curl -k`. |
+| `SESSION_COOKIE_SECURE` | `true` | Session cookie only over HTTPS (`http://localhost` counts as secure in browsers). |
+
+To get the controller's CA as PEM:
+
+```bash
+curl -sk https://ctrl.example.com:1280/.well-known/est/cacerts | base64 -d \
+  | openssl pkcs7 -inform DER -print_certs > controller-ca.pem
+```
+
+Every response carries `X-Frame-Options: DENY` and a `frame-ancestors 'none'` CSP, so the console cannot be embedded in
+another site. Behind a reverse proxy, `X-Forwarded-*` headers are honoured only from private or loopback addresses.
 
 ## Learn more
 
