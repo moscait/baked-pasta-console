@@ -1,29 +1,24 @@
 name: Release Vaadin Container
 
-# Publishes multi-platform (linux/amd64 + linux/arm64) container images to GHCR:
-#   push to main (vaadin/**) -> :main and :sha-<commit>
-#   tag vaadin-vX.Y.Z        -> :X.Y.Z, :X.Y, :latest, and :sha-<commit> + GitHub Release
+# Publishes multi-platform (linux/amd64 + linux/arm64) container images to GHCR, and a GitHub
+# Release, only when a release tag is pushed:
+#   tag vaadin-vX.Y.Z -> :X.Y.Z, :X.Y, :latest and :sha-<commit>
+# Pushes to main publish nothing; ci.yml checks them (including a container build).
 on:
   push:
-    branches: [main]
     tags: ['vaadin-v*']
-    paths:
-      - 'vaadin/**'
-      - '.github/workflows/release-vaadin.yml'
-      - '.github/workflows/ci.yml'
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: baked-pasta-console-vaadin
+  # Job-level env cannot read the env context, so the full image name is spelled out here.
+  IMAGE: ghcr.io/${{ github.repository_owner }}/baked-pasta-console-vaadin
 
 jobs:
   verify-tag:
     name: Verify Vaadin tag
-    if: startsWith(github.ref, 'refs/tags/vaadin-v')
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -46,7 +41,6 @@ jobs:
   build:
     name: Build (${{ matrix.platform.name }})
     needs: [verify-tag, test]
-    if: always() && (needs.verify-tag.result == 'success' || needs.verify-tag.result == 'skipped') && needs.test.result == 'success'
     runs-on: ${{ matrix.platform.runner }}
     permissions:
       contents: read
@@ -62,8 +56,6 @@ jobs:
             runner: ubuntu-24.04
           - name: linux/arm64
             runner: ubuntu-24.04-arm
-    env:
-      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
     steps:
       - name: Prepare
         run: |
@@ -110,8 +102,6 @@ jobs:
     permissions:
       contents: write
       packages: write
-    env:
-      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
     steps:
       - name: Collect digests
         env:
@@ -139,10 +129,9 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=ref,event=branch
             type=match,pattern=vaadin-v(.*),group=1
             type=match,pattern=vaadin-v(\d+\.\d+)\..*,group=1
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/vaadin-v') }}
+            type=raw,value=latest
             type=sha,format=long
 
       - name: Create multi-platform manifest and push tags
@@ -161,7 +150,6 @@ jobs:
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
-        if: startsWith(github.ref, 'refs/tags/vaadin-v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
